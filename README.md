@@ -19,6 +19,33 @@ attach-guard intercepts package installation commands and evaluates them against
 - Fails closed in CI when the provider is unavailable
 - Logs every decision to a local JSONL audit trail
 
+## Smart Version Replacement: Block Without Breaking Flow
+
+Most security tools just say "no." attach-guard says "no, but here's a safe alternative."
+
+When a risky version is blocked, attach-guard doesn't stop the developer — it finds the newest version that passes policy and offers it as a replacement:
+
+```
+> npm install new-pkg
+
+attach-guard evaluates:
+  new-pkg@2.0.0  -->  FAIL (published 1 hour ago, minimum age is 48 hours)
+  new-pkg@1.9.0  -->  PASS (30 days old, supply chain score 92)
+
+Result: ASK + rewritten command
+  "npm install new-pkg@1.9.0"
+```
+
+In Claude Code, this means Claude sees the safe alternative and can proceed immediately. The developer flow doesn't stop — it gets redirected to a safe path.
+
+| Scenario | Decision | What happens |
+|---|---|---|
+| Package is safe | **Allow** | Install proceeds normally |
+| Latest is risky, older version is safe | **Ask + rewrite** | Claude shows safe alternative, user confirms |
+| All versions fail (malware, all too new, etc.) | **Deny** | Blocked with clear explanation |
+
+Your flow only fully stops when there is genuinely no safe version to offer. In the common case — a package that's just too new or has a recent score drop — you get a one-click safe alternative.
+
 ## Why a Hook, Not a Skill or MCP
 
 attach-guard is a Claude Code **hook**, not a skill or MCP server. The distinction matters:
