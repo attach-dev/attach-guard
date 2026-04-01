@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hammadtq/attach-dev/attach-guard/internal/parser/spec"
 	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
 )
 
@@ -68,7 +69,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		}
 
 		// Package spec
-		pkg := parsePackageSpec(tok)
+		pkg := spec.ParsePackageSpec(tok)
 		pkg.Ecosystem = api.EcosystemNPM
 		cmd.Packages = append(cmd.Packages, pkg)
 		i++
@@ -82,58 +83,3 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	return cmd
 }
 
-// parsePackageSpec parses a package spec like "axios", "axios@1.7.0", "@scope/pkg@^2.0.0"
-func parsePackageSpec(spec string) api.PackageRequest {
-	req := api.PackageRequest{
-		RawSpec: spec,
-	}
-
-	name, version := splitSpec(spec)
-	req.Name = name
-	req.Version = version
-	req.Pinned = isExactVersion(version)
-
-	return req
-}
-
-// splitSpec splits "name@version" into name and version.
-// Handles scoped packages like "@scope/name@version".
-func splitSpec(spec string) (string, string) {
-	// Handle scoped packages
-	if strings.HasPrefix(spec, "@") {
-		// Find the second @ if it exists
-		rest := spec[1:]
-		idx := strings.Index(rest, "@")
-		if idx == -1 {
-			return spec, ""
-		}
-		return spec[:idx+1], rest[idx+1:]
-	}
-
-	idx := strings.Index(spec, "@")
-	if idx == -1 {
-		return spec, ""
-	}
-	return spec[:idx], spec[idx+1:]
-}
-
-// isExactVersion returns true if the version string is an exact version (no range operators).
-func isExactVersion(version string) bool {
-	if version == "" || version == "latest" || version == "*" {
-		return false
-	}
-
-	// Contains range operators
-	for _, prefix := range []string{"^", "~", ">=", "<=", ">", "<"} {
-		if strings.HasPrefix(version, prefix) {
-			return false
-		}
-	}
-
-	// Contains spaces or || (range expression)
-	if strings.Contains(version, " ") || strings.Contains(version, "||") {
-		return false
-	}
-
-	return true
-}

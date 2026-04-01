@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hammadtq/attach-dev/attach-guard/internal/parser/spec"
 	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
 )
 
@@ -58,7 +59,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			continue
 		}
 
-		pkg := parsePackageSpec(tok)
+		pkg := spec.ParsePackageSpec(tok)
 		pkg.Ecosystem = api.EcosystemPNPM
 		cmd.Packages = append(cmd.Packages, pkg)
 		i++
@@ -73,47 +74,3 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	return cmd
 }
 
-func parsePackageSpec(spec string) api.PackageRequest {
-	req := api.PackageRequest{
-		RawSpec: spec,
-	}
-
-	name, version := splitSpec(spec)
-	req.Name = name
-	req.Version = version
-	req.Pinned = isExactVersion(version)
-
-	return req
-}
-
-func splitSpec(spec string) (string, string) {
-	if strings.HasPrefix(spec, "@") {
-		rest := spec[1:]
-		idx := strings.Index(rest, "@")
-		if idx == -1 {
-			return spec, ""
-		}
-		return spec[:idx+1], rest[idx+1:]
-	}
-
-	idx := strings.Index(spec, "@")
-	if idx == -1 {
-		return spec, ""
-	}
-	return spec[:idx], spec[idx+1:]
-}
-
-func isExactVersion(version string) bool {
-	if version == "" || version == "latest" || version == "*" {
-		return false
-	}
-	for _, prefix := range []string{"^", "~", ">=", "<=", ">", "<"} {
-		if strings.HasPrefix(version, prefix) {
-			return false
-		}
-	}
-	if strings.Contains(version, " ") || strings.Contains(version, "||") {
-		return false
-	}
-	return true
-}

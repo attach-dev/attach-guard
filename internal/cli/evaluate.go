@@ -47,6 +47,16 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		}, nil
 	}
 
+	// Check if the package manager is enabled in config
+	if (cmd.PackageManager == "npm" && !e.cfg.PackageManagers.NPM) ||
+		(cmd.PackageManager == "pnpm" && !e.cfg.PackageManagers.PNPM) {
+		return &api.EvaluationResult{
+			Decision:        api.Allow,
+			Reason:          fmt.Sprintf("%s is not enabled in config", cmd.PackageManager),
+			OriginalCommand: rawCommand,
+		}, nil
+	}
+
 	provAvailable := e.prov.IsAvailable(ctx)
 
 	var packages []api.PackageEvaluation
@@ -123,13 +133,11 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			selectedVersions[pkg.Name] = v.Version
 			if result.WasRewritten {
 				anyRewritten = true
-				if mode == api.ModeClaude || mode == api.ModeShell {
+				if e.engine.ShouldAutoRewrite(mode) {
+					// Auto-rewrite enabled — silently allow the rewritten version
+				} else {
 					overallDecision = worseDecision(overallDecision, api.Ask)
 					overallReason = fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version)
-				}
-				if e.engine.ShouldAutoRewrite(mode) {
-					// Auto-rewrite allowed — keep as allow
-					overallDecision = worseDecision(overallDecision, api.Allow)
 				}
 			}
 		}

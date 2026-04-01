@@ -9,9 +9,6 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Mode != "ask" {
-		t.Errorf("expected mode=ask, got %s", cfg.Mode)
-	}
 	if cfg.Provider.Kind != "socket" {
 		t.Errorf("expected provider=socket, got %s", cfg.Provider.Kind)
 	}
@@ -42,23 +39,20 @@ func TestWriteAndLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Mode != "ask" {
-		t.Errorf("expected mode=ask after load, got %s", cfg.Mode)
-	}
 	if cfg.Policy.DenyKnownMalware != true {
 		t.Error("expected deny_known_malware=true")
 	}
 }
 
 func TestEnvOverrides(t *testing.T) {
-	os.Setenv("ATTACH_GUARD_MODE", "enforce")
-	defer os.Unsetenv("ATTACH_GUARD_MODE")
+	os.Setenv("ATTACH_GUARD_LOG_PATH", "/tmp/test-audit.jsonl")
+	defer os.Unsetenv("ATTACH_GUARD_LOG_PATH")
 
 	cfg := DefaultConfig()
 	applyEnvOverrides(cfg)
 
-	if cfg.Mode != "enforce" {
-		t.Errorf("expected mode=enforce from env, got %s", cfg.Mode)
+	if cfg.Logging.Path != "/tmp/test-audit.jsonl" {
+		t.Errorf("expected log path from env, got %s", cfg.Logging.Path)
 	}
 }
 
