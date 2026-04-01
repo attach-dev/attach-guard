@@ -19,33 +19,69 @@ attach-guard intercepts package installation commands and evaluates them against
 - Fails closed in CI when the provider is unavailable
 - Logs every decision to a local JSONL audit trail
 
-## Why Hard Enforcement, Not Advisory MCP
+## Why a Hook, Not a Skill or MCP
 
-Socket MCP and similar tools provide package intelligence as advisory context. attach-guard uses that intelligence as input but enforces decisions at the command execution boundary. The hook blocks the install before the package manager runs. This is the difference between "here's some context about this package" and "this install is denied."
+attach-guard is a Claude Code **hook**, not a skill or MCP server. The distinction matters:
 
-## Quickstart
+- **Hooks** run automatically on every matching tool call. They enforce rules deterministically — Claude cannot skip or override them.
+- **Skills** are instructions Claude follows when invoked. They guide behavior but cannot block actions.
+- **MCP servers** provide advisory context. They inform but do not enforce.
 
-### Build
+A security guardrail must be a hook because enforcement requires interception at the tool-call boundary, before execution.
+
+## Installation
+
+### Prerequisites
+
+- [Go 1.21+](https://go.dev/dl/) (to build from source)
+- A [Socket.dev](https://socket.dev) API token (free tier available)
+
+### Step 1: Build and install the binary
 
 ```bash
 go build -o attach-guard ./cmd/attach-guard
 ```
 
-### Initialize config
+Move the binary somewhere on your PATH:
 
 ```bash
-./attach-guard config init
+# Option A: Move to a standard location
+sudo mv attach-guard /usr/local/bin/
+
+# Option B: Move to a user-local bin directory
+mkdir -p ~/.local/bin
+mv attach-guard ~/.local/bin/
+# Make sure ~/.local/bin is in your PATH (add to ~/.bashrc or ~/.zshrc):
+# export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Set up your Socket API token
+Verify it works:
+
+```bash
+attach-guard version
+# attach-guard v0.1.0
+```
+
+### Step 2: Set up your Socket API token
 
 ```bash
 export SOCKET_API_TOKEN="your-token-here"
 ```
 
-## Claude Code Setup
+Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist across sessions.
 
-Add to `.claude/settings.json` or `.claude/settings.local.json`:
+### Step 3: Initialize config
+
+```bash
+attach-guard config init
+# Default config written to ~/.attach-guard/config.yaml
+```
+
+This creates `~/.attach-guard/config.yaml` with sensible defaults. See [Configuration](#configuration) below to customize policy thresholds.
+
+### Step 4: Add the Claude Code hook
+
+Add the following to your project's `.claude/settings.json` (shared with team) or `.claude/settings.local.json` (personal, gitignored):
 
 ```json
 {
@@ -65,7 +101,33 @@ Add to `.claude/settings.json` or `.claude/settings.local.json`:
 }
 ```
 
-When Claude attempts `npm install axios`, attach-guard intercepts and returns allow, ask (with rewritten command), or deny via the `hookSpecificOutput` contract.
+For global protection across all projects, add it to `~/.claude/settings.json` instead.
+
+### Step 5: Verify
+
+Ask Claude Code to install a package. You should see attach-guard intercept the command:
+
+```
+> Install axios for me
+
+Claude: I'll install axios.
+[attach-guard] allow: package passes all policy checks
+```
+
+If the package is risky, Claude will be blocked or asked to confirm.
+
+## How It Works
+
+When Claude calls the Bash tool with a command like `npm install axios`:
+
+1. Claude Code fires the PreToolUse hook before execution
+2. The hook pipes the tool input JSON to `attach-guard hook` via stdin
+3. attach-guard parses the command, evaluates packages against policy
+4. Returns a `hookSpecificOutput` JSON response:
+   - `permissionDecision: "allow"` — install proceeds
+   - `permissionDecision: "ask"` — Claude shows the reason and asks the user
+   - `permissionDecision: "deny"` — install is blocked, reason shown to Claude
+5. On internal errors, exits with code 2 (blocking) to fail closed
 
 ## CLI Commands
 
@@ -154,6 +216,7 @@ When you run `npm install axios` (no version pin):
 
 - Local/interactive mode: asks on provider failure
 - CI mode: denies on provider failure (fail closed)
+- Internal errors in hook mode: exit code 2 (blocks the install)
 
 ## Audit Log
 
@@ -161,7 +224,7 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 
 ```json
 {
-  "timestamp": "2025-01-15T10:30:00Z",
+  "timestamp": "2026-01-15T10:30:00Z",
   "user": "dev",
   "cwd": "/home/dev/project",
   "package_manager": "npm",
