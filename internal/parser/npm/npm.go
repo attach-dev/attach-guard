@@ -23,7 +23,6 @@ var flagsWithValue = map[string]bool{
 }
 
 // globalFlagsWithValue are npm flags that appear before the action verb and take a value.
-// globalFlagsWithValue are npm flags that appear before the action verb and take a value.
 // Note: --registry intentionally appears here and in flagsWithValue since it's valid in both positions.
 var globalFlagsWithValue = map[string]bool{
 	"--prefix":     true,

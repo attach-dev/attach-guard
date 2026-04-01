@@ -100,10 +100,14 @@ func cmdHook() {
 
 	if !claude.IsGuardedTool(input.ToolName) {
 		// Not a guarded tool — allow
-		out, _ := claude.FormatHookOutput(&api.EvaluationResult{
+		out, err := claude.FormatHookOutput(&api.EvaluationResult{
 			Decision: api.Allow,
 			Reason:   "not a guarded tool",
 		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
+			os.Exit(exitCodeHookBlock)
+		}
 		fmt.Println(string(out))
 		return
 	}
