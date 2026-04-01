@@ -158,6 +158,29 @@ func TestEvaluate_NonInstallCommand(t *testing.T) {
 	}
 }
 
+func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	eval := NewEvaluator(cfg, mock)
+
+	// An unknown wrapper around npm install should be denied, not allowed
+	suspicious := []string{
+		"strace npm install axios",
+		"nohup npm install axios",
+		"some-wrapper npm install lodash",
+	}
+	for _, cmd := range suspicious {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Decision != api.Deny {
+			t.Errorf("expected Deny for suspicious unparsed install %q, got %s", cmd, result.Decision)
+		}
+	}
+}
+
 func TestEvaluate_NonNPMCommand(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()

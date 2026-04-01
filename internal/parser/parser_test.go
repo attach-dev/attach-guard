@@ -280,6 +280,35 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 	}
 }
 
+func TestLooksLikeInstall(t *testing.T) {
+	suspicious := []string{
+		"some-wrapper npm install axios",
+		"/opt/bin/mystery npm install lodash",
+		"strace npm install axios",
+		"nohup npm install axios",
+		"watch pnpm add react",
+	}
+	for _, cmd := range suspicious {
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	safe := []string{
+		"git status",
+		"npm run test",
+		"npm test",
+		"echo install npm",
+		"ls -la",
+		"pnpm run build",
+	}
+	for _, cmd := range safe {
+		if LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = true, want false", cmd)
+		}
+	}
+}
+
 func TestIsInstallCommand(t *testing.T) {
 	installCmds := []string{
 		"npm install axios",

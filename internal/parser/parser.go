@@ -54,6 +54,44 @@ func IsInstallCommand(rawCommand string) bool {
 	return Parse(rawCommand) != nil
 }
 
+// installVerbs are action tokens that indicate a package install operation.
+var installVerbs = map[string]bool{
+	"install": true,
+	"i":       true,
+	"add":     true,
+}
+
+// pmBinaries are package manager basenames we guard.
+var pmBinaries = map[string]bool{
+	"npm":  true,
+	"pnpm": true,
+}
+
+// LooksLikeInstall returns true if the raw command contains tokens that look
+// like a package manager install even though Parse() could not fully classify
+// it. This catches novel wrapper/prefix combinations that bypass structured
+// parsing. The caller can use this to fail closed on suspicious commands
+// instead of silently allowing them.
+//
+// The heuristic requires that a PM binary token appears before an install verb
+// token (i.e., "npm install", not "install npm"), which matches the actual
+// command syntax of npm/pnpm.
+func LooksLikeInstall(rawCommand string) bool {
+	tokens := Tokenize(rawCommand)
+	tokens = firstCommandSegment(tokens)
+
+	pmSeen := false
+	for _, tok := range tokens {
+		base := filepath.Base(tok)
+		if pmBinaries[base] {
+			pmSeen = true
+		} else if pmSeen && installVerbs[tok] {
+			return true
+		}
+	}
+	return false
+}
+
 // transparentWrappers are commands that simply exec their arguments.
 // We strip these (and their flags) to reach the underlying PM command.
 var transparentWrappers = map[string]bool{

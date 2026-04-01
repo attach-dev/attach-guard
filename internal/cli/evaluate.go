@@ -40,6 +40,16 @@ func NewEvaluator(cfg *config.Config, prov provider.Provider) *Evaluator {
 func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mode) (*api.EvaluationResult, error) {
 	cmd := parser.Parse(rawCommand)
 	if cmd == nil {
+		// Parser could not fully classify the command. Check if it still
+		// looks like a package install wrapped in an unrecognized prefix.
+		// If so, block rather than silently allowing — fail closed.
+		if parser.LooksLikeInstall(rawCommand) {
+			return &api.EvaluationResult{
+				Decision:        api.Deny,
+				Reason:          "command looks like a package install but could not be fully parsed; blocking for safety",
+				OriginalCommand: rawCommand,
+			}, nil
+		}
 		// Not an install command — allow passthrough
 		return &api.EvaluationResult{
 			Decision:        api.Allow,
