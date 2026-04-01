@@ -3,7 +3,7 @@ VERSION := 0.1.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 
-.PHONY: build test vet plugin-build plugin-clean
+.PHONY: build test vet plugin-build plugin-clean plugin-stamp-version
 
 build:
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY_NAME) ./cmd/attach-guard
@@ -14,7 +14,10 @@ test:
 vet:
 	go vet ./...
 
-plugin-build:
+plugin-stamp-version:
+	@perl -i -pe 's/"version": "[^"]*"/"version": "$(VERSION)"/' plugin/.claude-plugin/plugin.json
+
+plugin-build: plugin-stamp-version
 	@mkdir -p plugin/hooks/bin
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \

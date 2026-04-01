@@ -53,7 +53,7 @@ func TestPluginConfigDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("ATTACH_GUARD_PLUGIN_CONFIG", dir)
+	t.Setenv("ATTACH_GUARD_PLUGIN_CONFIG_DIR", dir)
 	// Point HOME to an empty dir so user-global config doesn't interfere
 	t.Setenv("HOME", t.TempDir())
 
@@ -68,6 +68,40 @@ func TestPluginConfigDir(t *testing.T) {
 	// Other defaults should be preserved
 	if cfg.Provider.Kind != "socket" {
 		t.Errorf("expected provider=socket, got %s", cfg.Provider.Kind)
+	}
+}
+
+func TestBundledPluginConfigMatchesDefaults(t *testing.T) {
+	// Ensure the bundled plugin/config/config.yaml stays in sync with DefaultConfig().
+	// If this test fails, update the bundled YAML or DefaultConfig() so they match.
+	bundledPath := filepath.Join("..", "..", "plugin", "config", "config.yaml")
+	bundled, err := LoadFromFile(bundledPath)
+	if err != nil {
+		t.Skipf("bundled plugin config not found (expected in repo root): %v", err)
+	}
+
+	defaults := DefaultConfig()
+
+	if bundled.Provider != defaults.Provider {
+		t.Errorf("provider mismatch:\n  bundled: %+v\n  default: %+v", bundled.Provider, defaults.Provider)
+	}
+	if bundled.Policy.DenyKnownMalware != defaults.Policy.DenyKnownMalware ||
+		bundled.Policy.MinSupplyChainScore != defaults.Policy.MinSupplyChainScore ||
+		bundled.Policy.MinOverallScore != defaults.Policy.MinOverallScore ||
+		bundled.Policy.GrayBandMinSupplyChain != defaults.Policy.GrayBandMinSupplyChain ||
+		bundled.Policy.MinimumPackageAgeHours != defaults.Policy.MinimumPackageAgeHours {
+		t.Errorf("policy thresholds mismatch:\n  bundled: %+v\n  default: %+v", bundled.Policy, defaults.Policy)
+	}
+	if bundled.Policy.ProviderUnavailable != defaults.Policy.ProviderUnavailable {
+		t.Errorf("provider_unavailable_behavior mismatch:\n  bundled: %+v\n  default: %+v",
+			bundled.Policy.ProviderUnavailable, defaults.Policy.ProviderUnavailable)
+	}
+	if bundled.PackageManagers != defaults.PackageManagers {
+		t.Errorf("package_managers mismatch:\n  bundled: %+v\n  default: %+v",
+			bundled.PackageManagers, defaults.PackageManagers)
+	}
+	if bundled.Logging != defaults.Logging {
+		t.Errorf("logging mismatch:\n  bundled: %+v\n  default: %+v", bundled.Logging, defaults.Logging)
 	}
 }
 

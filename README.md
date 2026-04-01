@@ -58,23 +58,7 @@ A security guardrail must be a hook because enforcement requires interception at
 
 ## Installation
 
-### Option A: Claude Code Plugin (recommended)
-
-The easiest way to install attach-guard is as a Claude Code plugin:
-
-```bash
-claude plugin install attach-dev/attach-guard --path plugin
-```
-
-This automatically registers the hook — no manual settings.json editing needed. Then set your API token:
-
-```bash
-export SOCKET_API_TOKEN="your-token-here"
-```
-
-### Option B: Manual Installation
-
-#### Prerequisites
+### Prerequisites
 
 - [Go 1.21+](https://go.dev/dl/) (to build from source)
 - A [Socket.dev](https://socket.dev) API token (free tier available)
@@ -228,11 +212,13 @@ logging:
 
 ### Config precedence
 
-1. Environment variables
-2. Project-local config (`.attach-guard/config.yaml`)
+Highest priority wins (later sources override earlier):
+
+1. Built-in defaults
+2. Plugin-bundled config (when installed as a plugin)
 3. User-global config (`~/.attach-guard/config.yaml`)
-4. Plugin-bundled config (when installed as a plugin)
-5. Built-in defaults
+4. Project-local config (`.attach-guard/config.yaml`)
+5. Environment variables
 
 ## Policy Model
 
@@ -300,15 +286,28 @@ make test
 # Build
 make build
 
-# Build plugin binaries (cross-compile for all platforms)
-make plugin-build
-
-# Test plugin locally
-claude --plugin-dir ./plugin
-
 # Evaluate a command
 ./attach-guard evaluate npm install lodash
 ```
+
+### Testing as a Claude Code plugin
+
+The plugin can be tested locally without a remote install. The bootstrap script
+will auto-build the binary from source on first run if Go is installed:
+
+```bash
+claude --plugin-dir ./plugin
+```
+
+To cross-compile binaries for all platforms explicitly:
+
+```bash
+make plugin-build
+```
+
+> **Note:** Remote `claude plugin install` is not yet supported because the plugin
+> does not ship prebuilt binaries. This is tracked in the roadmap (GitHub Actions
+> release workflow).
 
 ## License
 

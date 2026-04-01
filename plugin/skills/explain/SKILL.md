@@ -9,10 +9,10 @@ When a user asks about the safety or risk profile of an npm/pnpm package, or whe
 
 ## How to use
 
-Run the attach-guard evaluate command:
+Run the attach-guard evaluate command via the plugin wrapper:
 
 ```bash
-attach-guard evaluate npm install <package-name>
+${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh evaluate npm install <package-name>
 ```
 
 This returns JSON with:
