@@ -113,23 +113,10 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		packages = append(packages, eval)
 
 		if pkg.Pinned {
-			// Evaluate the pinned version
-			input := policy.Input{
-				Ecosystem:         pkg.Ecosystem,
-				Name:              pkg.Name,
-				RequestedSpec:     pkg.Version,
-				ResolvedVersion:   v.Version,
-				Score:             v.Score,
-				Alerts:            v.Alerts,
-				PublishedAt:       v.PublishedAt,
-				ProviderAvailable: true,
-				Mode:              mode,
-				Pinned:            true,
-			}
-			decision := e.engine.Evaluate(input)
-			overallDecision = worseDecision(overallDecision, decision.Decision)
-			if decision.Decision != api.Allow {
-				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, decision.Reason))
+			// Use the selector's policy decision for the pinned version
+			overallDecision = worseDecision(overallDecision, result.Decision)
+			if result.Decision != api.Allow {
+				reasons = append(reasons, fmt.Sprintf("%s@%s: does not pass policy", pkg.Name, pkg.Version))
 			}
 		} else {
 			// Unpinned — use version selection result
@@ -137,16 +124,15 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 			// Apply the selector's policy decision
 			overallDecision = worseDecision(overallDecision, result.Decision)
-			if result.Decision == api.Ask {
-				reasons = append(reasons, fmt.Sprintf("%s: scores are in review range", pkg.Name))
-			}
 
 			if result.WasRewritten {
 				anyRewritten = true
 				if !e.engine.ShouldAutoRewrite(mode) {
 					overallDecision = worseDecision(overallDecision, api.Ask)
-					reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
 				}
+				reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
+			} else if result.Decision == api.Ask {
+				reasons = append(reasons, fmt.Sprintf("%s: scores are in review range", pkg.Name))
 			}
 		}
 	}

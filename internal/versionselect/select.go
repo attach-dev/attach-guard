@@ -39,7 +39,20 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 		if err != nil {
 			return nil, fmt.Errorf("evaluating pinned version %s@%s: %w", pkg.Name, pkg.Version, err)
 		}
-		return &Result{Selected: info, WasRewritten: false, Decision: api.Allow}, nil
+		input := policy.Input{
+			Ecosystem:         pkg.Ecosystem,
+			Name:              pkg.Name,
+			RequestedSpec:     pkg.Version,
+			ResolvedVersion:   info.Version,
+			Score:             info.Score,
+			Alerts:            info.Alerts,
+			PublishedAt:       info.PublishedAt,
+			ProviderAvailable: true,
+			Mode:              mode,
+			Pinned:            true,
+		}
+		decision := s.engine.Evaluate(input)
+		return &Result{Selected: info, WasRewritten: false, Decision: decision.Decision}, nil
 	}
 
 	// Unpinned: fetch candidate versions
