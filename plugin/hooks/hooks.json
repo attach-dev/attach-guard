@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh hook",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh\" hook",
             "timeout": 30
           }
         ]

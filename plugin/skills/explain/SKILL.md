@@ -12,7 +12,7 @@ When a user asks about the safety or risk profile of an npm/pnpm package, or whe
 Run the attach-guard evaluate command via the plugin wrapper:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh evaluate npm install <package-name>
+"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh" evaluate npm install <package-name>
 ```
 
 This returns JSON with:
