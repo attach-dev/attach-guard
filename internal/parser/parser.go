@@ -153,17 +153,26 @@ func looksLikeInstallTokens(tokens []string) bool {
 		// Shell binary without -c: remaining tokens are script args, stop scanning
 		if shellBinaries[base] {
 			i++
-			// Check if -c is present (standalone or combined like -lc)
+			// Check if -c is present (standalone or combined like -lc).
+			// Shell flags that take a value (-o, --rcfile) must skip it.
 			hasC := false
-			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
-				if tokens[i] == "-c" {
+			for i < len(tokens) {
+				tok := tokens[i]
+				if !strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "+") {
+					break // non-flag token — stop scanning flags
+				}
+				if tok == "-c" {
 					hasC = true
 				}
-				if !strings.HasPrefix(tokens[i], "--") && len(tokens[i]) > 2 &&
-					strings.ContainsRune(tokens[i][1:], 'c') {
+				if strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "--") &&
+					len(tok) > 2 && strings.ContainsRune(tok[1:], 'c') {
 					hasC = true
 				}
 				i++
+				// Consume value for flags that take one
+				if (tok == "-o" || tok == "+o" || tok == "--rcfile" || tok == "--init-file") && i < len(tokens) {
+					i++
+				}
 			}
 			if !hasC {
 				// bash script.sh ... — stop, these are script arguments
@@ -273,6 +282,8 @@ func unwrapPrefixes(tokens []string) []string {
 			saved := tokens // preserve in case we can't find -c
 			tokens = tokens[1:]
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
+			// Shell flags that take a separate value (-o, --rcfile, etc.) must
+			// consume that value to avoid mistaking it for a script filename.
 			foundC := false
 			for len(tokens) > 0 {
 				flag := tokens[0]
@@ -286,6 +297,13 @@ func unwrapPrefixes(tokens []string) []string {
 					len(flag) > 2 && strings.ContainsRune(flag[1:], 'c') {
 					foundC = true
 					break
+				}
+				// Long flags that take a value — consume the next token
+				if flag == "--rcfile" || flag == "--init-file" || flag == "-o" || flag == "+o" {
+					if len(tokens) > 0 {
+						tokens = tokens[1:]
+					}
+					continue
 				}
 				// Other flags like -l, -i, -x — skip
 				if strings.HasPrefix(flag, "-") {

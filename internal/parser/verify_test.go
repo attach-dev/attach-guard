@@ -27,7 +27,24 @@ func TestVerifyReviewFindings(t *testing.T) {
 		}
 	}
 
-	// Finding 3: command -v is introspection, not execution
+	// Finding 3: shell flags that take a value should not break -c detection
+	shellFlagValueCmds := []string{
+		"bash -o pipefail -c 'npm install axios'",
+		"bash --rcfile /dev/null -c 'npm install axios'",
+		"bash --init-file /dev/null -c 'npm install axios'",
+		"sh +o posix -c 'pnpm add react'",
+		"bash -o pipefail -o errexit -c 'npm install axios'",
+	}
+	for _, cmd := range shellFlagValueCmds {
+		if Parse(cmd) == nil {
+			t.Errorf("Parse(%q) = nil, want install command", cmd)
+		}
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	// Finding 4: command -v is introspection, not execution
 	introspecCmds := []string{
 		"command -v npm",
 		"command -v npm install axios",
