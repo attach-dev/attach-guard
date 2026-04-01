@@ -1,0 +1,7 @@
+{
+  "session_id": "test-session-003",
+  "tool_name": "Read",
+  "tool_input": {
+    "command": "package.json"
+  }
+}

@@ -1,0 +1,21 @@
+mode: ask
+provider:
+  kind: socket
+  api_token_env: SOCKET_API_TOKEN
+policy:
+  deny_known_malware: true
+  min_supply_chain_score: 70
+  min_overall_score: 70
+  gray_band_min_supply_chain_score: 50
+  minimum_package_age_hours: 48
+  provider_unavailable_behavior:
+    local: ask
+    ci: deny
+  auto_rewrite_unpinned:
+    local: false
+    ci: false
+package_managers:
+  npm: true
+  pnpm: true
+logging:
+  path: "~/.attach-guard/audit.jsonl"

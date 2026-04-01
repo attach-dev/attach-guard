@@ -1,0 +1,39 @@
+# Roadmap
+
+## Phase 1: MVP (current)
+
+- [x] npm parser and interceptor
+- [x] pnpm parser and interceptor
+- [x] Socket provider adapter
+- [x] Policy engine with allow/ask/deny
+- [x] Minimum package age enforcement
+- [x] Version selection and command rewrite
+- [x] Claude Code PreToolUse hook
+- [x] Shell shims for npm and pnpm
+- [x] JSONL audit logging
+- [x] Config loading with env var overrides
+- [x] CLI: evaluate, hook, install, doctor, config, explain, version
+- [x] Unit and e2e tests
+- [x] Documentation
+
+## Phase 2: Ecosystem Expansion
+
+- [ ] Yarn support
+- [ ] Python support (uv, pip)
+- [ ] Lockfile preview resolution
+- [ ] Better transitive dependency visibility
+- [ ] Provider fusion (combine multiple providers)
+- [ ] Signed policy bundles
+- [ ] Homebrew formula
+- [ ] Install script (curl | sh)
+
+## Phase 3: Teams and Enterprise
+
+- [ ] Org-level policy packs
+- [ ] Remote audit ingestion
+- [ ] Team dashboards
+- [ ] Enterprise provider adapters
+- [ ] RBAC for policy management
+- [ ] Integration with CI/CD platforms (GitHub Actions, GitLab CI)
+- [ ] Docker image for CI
+- [ ] Policy-as-code with version control

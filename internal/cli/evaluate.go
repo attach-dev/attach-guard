@@ -1,0 +1,187 @@
+// Package cli implements the attach-guard CLI commands.
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/hammadtq/attach-dev/attach-guard/internal/audit"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/config"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/parser"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/policy"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/provider"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/rewrite"
+	"github.com/hammadtq/attach-dev/attach-guard/internal/versionselect"
+	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+)
+
+// Evaluator runs package evaluation against policy.
+type Evaluator struct {
+	cfg    *config.Config
+	prov   provider.Provider
+	engine *policy.Engine
+	logger *audit.Logger
+}
+
+// NewEvaluator creates a new evaluator.
+func NewEvaluator(cfg *config.Config, prov provider.Provider) *Evaluator {
+	return &Evaluator{
+		cfg:    cfg,
+		prov:   prov,
+		engine: policy.NewEngine(cfg),
+		logger: audit.NewLogger(cfg.ResolveLogPath()),
+	}
+}
+
+// Evaluate evaluates a raw command string and returns the result.
+func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mode) (*api.EvaluationResult, error) {
+	cmd := parser.Parse(rawCommand)
+	if cmd == nil {
+		// Not an install command — allow passthrough
+		return &api.EvaluationResult{
+			Decision:        api.Allow,
+			Reason:          "not a guarded install command",
+			OriginalCommand: rawCommand,
+		}, nil
+	}
+
+	provAvailable := e.prov.IsAvailable(ctx)
+
+	var packages []api.PackageEvaluation
+	var overallDecision api.Decision = api.Allow
+	var overallReason string
+	selectedVersions := make(map[string]string)
+	anyRewritten := false
+
+	selector := versionselect.NewSelector(e.prov, e.engine, e.cfg)
+
+	for _, pkg := range cmd.Packages {
+		eval := api.PackageEvaluation{
+			Ecosystem: pkg.Ecosystem,
+			Name:      pkg.Name,
+			Requested: pkg.Version,
+		}
+
+		if !provAvailable {
+			// Handle provider unavailable
+			decision := e.engine.Evaluate(policy.Input{
+				Ecosystem:         pkg.Ecosystem,
+				Name:              pkg.Name,
+				ProviderAvailable: false,
+				Mode:              mode,
+			})
+			eval.SelectedVersion = pkg.Version
+			packages = append(packages, eval)
+			overallDecision = worseDecision(overallDecision, decision.Decision)
+			overallReason = decision.Reason
+			continue
+		}
+
+		result, err := selector.Select(ctx, pkg, mode)
+		if err != nil {
+			return nil, fmt.Errorf("evaluating %s: %w", pkg.Name, err)
+		}
+
+		if result.AllFailed {
+			eval.SelectedVersion = ""
+			packages = append(packages, eval)
+			overallDecision = api.Deny
+			overallReason = fmt.Sprintf("no acceptable version found for %s", pkg.Name)
+			continue
+		}
+
+		v := result.Selected
+		eval.SelectedVersion = v.Version
+		eval.Score = v.Score
+		eval.AgeHours = time.Since(v.PublishedAt).Hours()
+		eval.Alerts = v.Alerts
+		packages = append(packages, eval)
+
+		if pkg.Pinned {
+			// Evaluate the pinned version
+			input := policy.Input{
+				Ecosystem:         pkg.Ecosystem,
+				Name:              pkg.Name,
+				RequestedSpec:     pkg.Version,
+				ResolvedVersion:   v.Version,
+				Score:             v.Score,
+				Alerts:            v.Alerts,
+				PublishedAt:       v.PublishedAt,
+				ProviderAvailable: true,
+				Mode:              mode,
+				Pinned:            true,
+			}
+			decision := e.engine.Evaluate(input)
+			overallDecision = worseDecision(overallDecision, decision.Decision)
+			if decision.Decision != api.Allow {
+				overallReason = decision.Reason
+			}
+		} else {
+			// Unpinned — use version selection result
+			selectedVersions[pkg.Name] = v.Version
+			if result.WasRewritten {
+				anyRewritten = true
+				if mode == api.ModeClaude || mode == api.ModeShell {
+					overallDecision = worseDecision(overallDecision, api.Ask)
+					overallReason = fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version)
+				}
+				if e.engine.ShouldAutoRewrite(mode) {
+					// Auto-rewrite allowed — keep as allow
+					overallDecision = worseDecision(overallDecision, api.Allow)
+				}
+			}
+		}
+	}
+
+	evalResult := &api.EvaluationResult{
+		Decision:        overallDecision,
+		Reason:          overallReason,
+		OriginalCommand: rawCommand,
+		Packages:        packages,
+	}
+
+	if anyRewritten {
+		evalResult.RewrittenCommand = rewrite.Command(cmd, selectedVersions)
+	}
+
+	// Audit log
+	provName := "unknown"
+	if e.prov != nil {
+		provName = e.prov.Name()
+	}
+	_ = e.logger.Log(audit.Entry{
+		PackageManager:   cmd.PackageManager,
+		OriginalCommand:  rawCommand,
+		RewrittenCommand: evalResult.RewrittenCommand,
+		Decision:         overallDecision,
+		Reason:           overallReason,
+		Packages:         packages,
+		Provider:         provName,
+		Mode:             string(mode),
+	})
+
+	return evalResult, nil
+}
+
+// EvaluateJSON evaluates and returns JSON bytes.
+func (e *Evaluator) EvaluateJSON(ctx context.Context, rawCommand string, mode api.Mode) ([]byte, error) {
+	result, err := e.Evaluate(ctx, rawCommand, mode)
+	if err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(result, "", "  ")
+}
+
+func worseDecision(a, b api.Decision) api.Decision {
+	rank := map[api.Decision]int{
+		api.Allow: 0,
+		api.Ask:   1,
+		api.Deny:  2,
+	}
+	if rank[b] > rank[a] {
+		return b
+	}
+	return a
+}
