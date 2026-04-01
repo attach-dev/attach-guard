@@ -238,6 +238,10 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"sudo pnpm add", "sudo pnpm add react", "react"},
 		{"env pnpm add", "env pnpm add react", "react"},
 		{"path-qualified sudo", "/usr/bin/sudo npm install axios", "axios"},
+		{"stacked sudo", "sudo sudo npm install axios", "axios"},
+		{"env then sudo", "env NODE_ENV=prod sudo npm install axios", "axios"},
+		{"empty env var value", "VAR= npm install axios", "axios"},
+		{"path-qualified env", "/usr/bin/env npm install axios", "axios"},
 	}
 
 	for _, tt := range tests {
