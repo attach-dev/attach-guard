@@ -9,5 +9,11 @@
   "license": "MIT",
   "keywords": ["security", "supply-chain", "npm", "pnpm", "hooks"],
   "hooks": "./hooks/hooks.json",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "userConfig": {
+    "socket_api_token": {
+      "description": "Socket.dev API token for package risk lookups (free tier available at socket.dev)",
+      "sensitive": true
+    }
+  }
 }

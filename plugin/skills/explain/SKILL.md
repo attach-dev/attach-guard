@@ -1,6 +1,8 @@
 ---
 name: explain
 description: Look up a package's supply-chain risk score, alerts, and version history using attach-guard. Use this when a user asks about a package's safety, or when attach-guard blocks an install and you want to understand why.
+argument-hint: "<package-name>"
+allowed-tools: "Bash, Read"
 ---
 
 # Explain Package Risk
@@ -12,8 +14,10 @@ When a user asks about the safety or risk profile of an npm/pnpm package, or whe
 Run the attach-guard evaluate command via the plugin wrapper:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh" evaluate npm install <package-name>
+"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh" evaluate npm install $ARGUMENTS
 ```
+
+If no package name was provided as an argument, ask the user which package they want to look up.
 
 This returns JSON with:
 - **decision**: `allow`, `ask`, or `deny`

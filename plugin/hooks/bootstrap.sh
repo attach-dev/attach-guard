@@ -10,14 +10,12 @@ set -euo pipefail
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# fatal_hook emits a JSON hook response that blocks the tool call with a
-# human-readable reason, then exits.
+# fatal_hook blocks the tool call and exits with code 2 (blocking error).
+# Per Claude Code docs, exit 2 means stdout is ignored and stderr is shown
+# as feedback, so we only write to stderr.
 fatal_hook() {
   local msg="$1"
   echo "attach-guard: $msg" >&2
-  cat <<EOJSON
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"attach-guard plugin error: $msg"}}
-EOJSON
   exit 2
 }
 
@@ -76,5 +74,10 @@ fi
 
 # Export plugin config directory so the binary can find bundled defaults
 export ATTACH_GUARD_PLUGIN_CONFIG_DIR="${PLUGIN_ROOT}/config"
+
+# Map plugin userConfig token to the env var the binary expects, if not already set
+if [[ -z "${SOCKET_API_TOKEN:-}" && -n "${CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN:-}" ]]; then
+  export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN"
+fi
 
 exec "$BINARY" "$@"

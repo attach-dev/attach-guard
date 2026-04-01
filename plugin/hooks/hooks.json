@@ -1,5 +1,4 @@
 {
-  "description": "Intercepts package install commands and enforces supply-chain security policies",
   "hooks": {
     "PreToolUse": [
       {

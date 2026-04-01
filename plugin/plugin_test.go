@@ -74,8 +74,11 @@ func TestExplainSkillQuotesPluginRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const want = "\"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh\" evaluate npm install <package-name>"
-	if !strings.Contains(string(data), want) {
+	const wantQuoted = "\"${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.sh\" evaluate npm install"
+	if !strings.Contains(string(data), wantQuoted) {
 		t.Fatalf("skill example does not quote CLAUDE_PLUGIN_ROOT path")
+	}
+	if !strings.Contains(string(data), "$ARGUMENTS") {
+		t.Fatalf("skill example does not use $ARGUMENTS for package name substitution")
 	}
 }
