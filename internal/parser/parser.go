@@ -89,31 +89,31 @@ func LooksLikeInstall(rawCommand string) bool {
 // to execute. If the heuristic encounters one of these, it stops scanning
 // because the following tokens are data, not a real command.
 var nonWrapperBinaries = map[string]bool{
-	"echo":   true,
-	"printf": true,
-	"cat":    true,
-	"grep":   true,
-	"awk":    true,
-	"sed":    true,
-	"head":   true,
-	"tail":   true,
-	"tee":    true,
-	"wc":     true,
-	"sort":   true,
-	"cut":    true,
-	"tr":     true,
-	"xargs":  true,
-	"find":   true,
-	"less":   true,
-	"more":   true,
-	"vi":     true,
-	"vim":    true,
-	"nano":   true,
-	"python": true,
+	"echo":    true,
+	"printf":  true,
+	"cat":     true,
+	"grep":    true,
+	"awk":     true,
+	"sed":     true,
+	"head":    true,
+	"tail":    true,
+	"tee":     true,
+	"wc":      true,
+	"sort":    true,
+	"cut":     true,
+	"tr":      true,
+	"xargs":   true,
+	"find":    true,
+	"less":    true,
+	"more":    true,
+	"vi":      true,
+	"vim":     true,
+	"nano":    true,
+	"python":  true,
 	"python3": true,
-	"ruby":   true,
-	"perl":   true,
-	"node":   true,
+	"ruby":    true,
+	"perl":    true,
+	"node":    true,
 }
 
 // shellBinaries are shells that take script filenames as positional arguments.
@@ -123,6 +123,19 @@ var shellBinaries = map[string]bool{
 	"bash": true,
 	"sh":   true,
 	"zsh":  true,
+}
+
+func isShellFlagToken(tok string) bool {
+	return strings.HasPrefix(tok, "-") || strings.HasPrefix(tok, "+")
+}
+
+func shellFlagTakesValue(flag string) bool {
+	switch flag {
+	case "-o", "+o", "-O", "+O", "--rcfile", "--init-file":
+		return true
+	default:
+		return false
+	}
 }
 
 // looksLikeInstallTokens checks if a flat token list contains a PM binary
@@ -154,11 +167,11 @@ func looksLikeInstallTokens(tokens []string) bool {
 		if shellBinaries[base] {
 			i++
 			// Check if -c is present (standalone or combined like -lc).
-			// Shell flags that take a value (-o, --rcfile) must skip it.
+			// Shell flags that take a value (-o, -O, --rcfile) must skip it.
 			hasC := false
 			for i < len(tokens) {
 				tok := tokens[i]
-				if !strings.HasPrefix(tok, "-") && !strings.HasPrefix(tok, "+") {
+				if !isShellFlagToken(tok) {
 					break // non-flag token — stop scanning flags
 				}
 				if tok == "-c" {
@@ -169,8 +182,8 @@ func looksLikeInstallTokens(tokens []string) bool {
 					hasC = true
 				}
 				i++
-				// Consume value for flags that take one
-				if (tok == "-o" || tok == "+o" || tok == "--rcfile" || tok == "--init-file") && i < len(tokens) {
+				// Consume value for flags that take one.
+				if shellFlagTakesValue(tok) && i < len(tokens) {
 					i++
 				}
 			}
@@ -282,7 +295,7 @@ func unwrapPrefixes(tokens []string) []string {
 			saved := tokens // preserve in case we can't find -c
 			tokens = tokens[1:]
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
-			// Shell flags that take a separate value (-o, --rcfile, etc.) must
+			// Shell flags that take a separate value (-o, -O, --rcfile, etc.) must
 			// consume that value to avoid mistaking it for a script filename.
 			foundC := false
 			for len(tokens) > 0 {
@@ -298,15 +311,15 @@ func unwrapPrefixes(tokens []string) []string {
 					foundC = true
 					break
 				}
-				// Long flags that take a value — consume the next token
-				if flag == "--rcfile" || flag == "--init-file" || flag == "-o" || flag == "+o" {
+				// Flags that take a value must consume the next token.
+				if shellFlagTakesValue(flag) {
 					if len(tokens) > 0 {
 						tokens = tokens[1:]
 					}
 					continue
 				}
-				// Other flags like -l, -i, -x — skip
-				if strings.HasPrefix(flag, "-") {
+				// Other flags like -l, -i, -x, +m — skip
+				if isShellFlagToken(flag) {
 					continue
 				}
 				// Non-flag, non -c token (e.g., "bash script.sh npm install axios").

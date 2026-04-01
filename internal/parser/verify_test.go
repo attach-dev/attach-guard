@@ -30,6 +30,8 @@ func TestVerifyReviewFindings(t *testing.T) {
 	// Finding 3: shell flags that take a value should not break -c detection
 	shellFlagValueCmds := []string{
 		"bash -o pipefail -c 'npm install axios'",
+		"bash -O extglob -c 'npm install axios'",
+		"bash +O extglob -c 'npm install axios'",
 		"bash --rcfile /dev/null -c 'npm install axios'",
 		"bash --init-file /dev/null -c 'npm install axios'",
 		"sh +o posix -c 'pnpm add react'",
