@@ -278,6 +278,9 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		"npx create-react-app my-app",
 		"command -v npm",
 		"time echo hello",
+		"bash script.sh npm install axios",
+		`echo "npm install axios"`,
+		"bash -c 'echo hello'",
 	}
 	for _, cmd := range nonInstalls {
 		if result := Parse(cmd); result != nil {
@@ -293,8 +296,6 @@ func TestLooksLikeInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"watch pnpm add react",
-		"bash -c 'npm install axios'",
-		"sh -c 'pnpm add react'",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
@@ -309,6 +310,9 @@ func TestLooksLikeInstall(t *testing.T) {
 		"echo install npm",
 		"ls -la",
 		"pnpm run build",
+		`echo "npm install axios"`,
+		`bash -c "echo hello"`,
+		"bash script.sh npm install axios",
 	}
 	for _, cmd := range safe {
 		if LooksLikeInstall(cmd) {

@@ -75,39 +75,96 @@ var pmBinaries = map[string]bool{
 //
 // The heuristic requires that a PM binary token appears before an install verb
 // token (i.e., "npm install", not "install npm"), which matches the actual
-// command syntax of npm/pnpm. It also checks inside compound tokens (e.g.,
-// a quoted shell -c argument like "npm install axios") by re-tokenizing them.
+// command syntax of npm/pnpm. It only inspects top-level tokens — it does NOT
+// re-tokenize compound tokens (e.g., quoted strings) to avoid false positives
+// on commands like echo "npm install axios". Shell -c forms are already handled
+// by unwrapPrefixes in Parse(), so they don't need a heuristic fallback.
 func LooksLikeInstall(rawCommand string) bool {
 	tokens := Tokenize(rawCommand)
 	tokens = firstCommandSegment(tokens)
+	return looksLikeInstallTokens(tokens)
+}
 
-	if looksLikeInstallTokens(tokens) {
-		return true
-	}
-
-	// Second pass: check inside compound tokens that may contain embedded
-	// commands (e.g., from shell -c 'npm install axios').
-	for _, tok := range tokens {
-		if strings.Contains(tok, " ") {
-			inner := Tokenize(tok)
-			if looksLikeInstallTokens(inner) {
-				return true
-			}
-		}
-	}
-	return false
+// shellBinaries are shells that take script filenames as positional arguments.
+// "bash script.sh npm install axios" should NOT be flagged because npm/install
+// are script arguments, not a real command.
+var shellBinaries = map[string]bool{
+	"bash": true,
+	"sh":   true,
+	"zsh":  true,
 }
 
 // looksLikeInstallTokens checks if a flat token list contains a PM binary
-// followed by an install verb.
+// followed by an install verb in a plausible command position.
+//
+// It skips known wrapper prefixes, flags, and env-var assignments. Unknown
+// binaries (strace, nohup, etc.) are treated as potential wrappers and skipped.
+// However, after a shell binary (bash/sh/zsh) without -c, remaining tokens are
+// treated as script arguments and NOT scanned for PM commands.
 func looksLikeInstallTokens(tokens []string) bool {
-	pmSeen := false
-	for _, tok := range tokens {
-		base := filepath.Base(tok)
+	i := 0
+	for i < len(tokens) {
+		base := filepath.Base(tokens[i])
+
+		// PM binary found — check for install verb
 		if pmBinaries[base] {
-			pmSeen = true
-		} else if pmSeen && installVerbs[tok] {
-			return true
+			for j := i + 1; j < len(tokens); j++ {
+				if installVerbs[tokens[j]] {
+					return true
+				}
+				if !strings.HasPrefix(tokens[j], "-") {
+					break
+				}
+			}
+			return false
+		}
+
+		// Shell binary without -c: remaining tokens are script args, stop scanning
+		if shellBinaries[base] {
+			i++
+			// Check if -c is present (standalone or combined like -lc)
+			hasC := false
+			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
+				if tokens[i] == "-c" {
+					hasC = true
+				}
+				if !strings.HasPrefix(tokens[i], "--") && len(tokens[i]) > 2 &&
+					tokens[i][len(tokens[i])-1] == 'c' {
+					hasC = true
+				}
+				i++
+			}
+			if !hasC {
+				// bash script.sh ... — stop, these are script arguments
+				return false
+			}
+			// -c was found, skip the command string token and keep scanning
+			if i < len(tokens) {
+				i++ // skip the -c argument
+			}
+			continue
+		}
+
+		// Known wrapper — skip it and its flags
+		if transparentWrappers[base] {
+			i++
+			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
+				i++
+			}
+			continue
+		}
+
+		// Env-var assignment — skip
+		if isEnvVarAssignment(tokens[i]) {
+			i++
+			continue
+		}
+
+		// Unknown binary (strace, nohup, etc.) — treat as potential wrapper, skip
+		i++
+		// Skip its flags
+		for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
+			i++
 		}
 	}
 	return false
@@ -166,8 +223,10 @@ func unwrapPrefixes(tokens []string) []string {
 		}
 
 		// Shell wrappers (bash -c '...', sh -c '...', zsh -c '...')
-		// Extract the command string and re-tokenize it.
+		// Only unwrap when -c is present; other forms like "bash script.sh ..."
+		// are not transparent wrappers and must not expose trailing arguments.
 		if base == "bash" || base == "sh" || base == "zsh" {
+			saved := tokens // preserve in case we can't find -c
 			tokens = tokens[1:]
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
 			foundC := false
@@ -188,8 +247,11 @@ func unwrapPrefixes(tokens []string) []string {
 				if strings.HasPrefix(flag, "-") {
 					continue
 				}
-				// Non-flag, non -c token — not a pattern we recognize
-				return tokens
+				// Non-flag, non -c token (e.g., "bash script.sh npm install axios").
+				// This is NOT a transparent wrapper — restore original tokens and
+				// let the outer loop break so the parsers see "bash" as tokens[0]
+				// (which won't match npm/pnpm).
+				return saved
 			}
 			if foundC && len(tokens) > 0 {
 				// The next token is the command string; re-tokenize it
@@ -201,8 +263,8 @@ func unwrapPrefixes(tokens []string) []string {
 				tokens = inner
 				continue
 			}
-			// Ran out of tokens after shell binary
-			return tokens
+			// No -c found or ran out of tokens — not a wrapper we handle
+			return saved
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags
