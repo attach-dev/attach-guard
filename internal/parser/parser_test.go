@@ -316,6 +316,12 @@ func TestLooksLikeInstall(t *testing.T) {
 		`echo "npm install axios"`,
 		`bash -c "echo hello"`,
 		"bash script.sh npm install axios",
+		"echo npm install axios",
+		"cat npm install axios",
+		"printf npm install axios",
+		"grep npm install package.json",
+		"python -c 'npm install'",
+		"node -e 'npm install'",
 	}
 	for _, cmd := range safe {
 		if LooksLikeInstall(cmd) {

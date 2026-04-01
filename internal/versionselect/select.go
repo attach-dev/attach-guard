@@ -63,7 +63,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 	}
 
 	if len(versions) == 0 {
-		return &Result{AllFailed: true, Reason: "no versions found"}, nil
+		return &Result{AllFailed: true, Decision: api.Deny, Reason: "no versions found"}, nil
 	}
 
 	// Versions should be sorted newest-first from the provider.
@@ -112,5 +112,5 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 		return bestAsk, nil
 	}
 
-	return &Result{AllFailed: true, Reason: "all candidate versions fail policy"}, nil
+	return &Result{AllFailed: true, Decision: api.Deny, Reason: "all candidate versions fail policy"}, nil
 }

@@ -85,6 +85,37 @@ func LooksLikeInstall(rawCommand string) bool {
 	return looksLikeInstallTokens(tokens)
 }
 
+// nonWrapperBinaries are commands that take arguments as text, not as commands
+// to execute. If the heuristic encounters one of these, it stops scanning
+// because the following tokens are data, not a real command.
+var nonWrapperBinaries = map[string]bool{
+	"echo":   true,
+	"printf": true,
+	"cat":    true,
+	"grep":   true,
+	"awk":    true,
+	"sed":    true,
+	"head":   true,
+	"tail":   true,
+	"tee":    true,
+	"wc":     true,
+	"sort":   true,
+	"cut":    true,
+	"tr":     true,
+	"xargs":  true,
+	"find":   true,
+	"less":   true,
+	"more":   true,
+	"vi":     true,
+	"vim":    true,
+	"nano":   true,
+	"python": true,
+	"python3": true,
+	"ruby":   true,
+	"perl":   true,
+	"node":   true,
+}
+
 // shellBinaries are shells that take script filenames as positional arguments.
 // "bash script.sh npm install axios" should NOT be flagged because npm/install
 // are script arguments, not a real command.
@@ -162,6 +193,12 @@ func looksLikeInstallTokens(tokens []string) bool {
 		if isEnvVarAssignment(tokens[i]) {
 			i++
 			continue
+		}
+
+		// If it's a known non-wrapper (output/text commands), stop scanning.
+		// These commands take arguments but do not exec them.
+		if nonWrapperBinaries[base] {
+			return false
 		}
 
 		// Unknown binary (strace, nohup, etc.) — treat as potential wrapper, skip
