@@ -16,53 +16,57 @@ var shellOperators = map[string]bool{
 	"&&": true,
 	"||": true,
 	";":  true,
+	"&":  true,
 	"|":  true,
 }
 
 // Parse attempts to parse a raw command string as a package manager install command.
-// Returns nil if the command is not a recognized install command.
-// It checks ALL command segments separated by shell operators (&&, ||, ;, |)
-// so that chained commands like "ls && npm install evil-pkg" are caught.
+// Returns the first parsed install command in evaluation order, or nil if the
+// command is not a recognized install command.
 func Parse(rawCommand string) *api.ParsedCommand {
-	tokens := Tokenize(rawCommand)
-	if len(tokens) == 0 {
-		return nil
+	for _, cmd := range ParseAll(rawCommand) {
+		return cmd
 	}
-
-	for _, segment := range commandSegments(tokens) {
-		if cmd := parseSegment(segment, rawCommand); cmd != nil {
-			return cmd
-		}
-	}
-
 	return nil
 }
 
-// parseSegment tries to parse a single command segment. After unwrapping
-// prefixes (which may expand shell -c strings containing operators), it
-// re-splits on shell operators and checks each sub-segment.
-func parseSegment(tokens []string, rawCommand string) *api.ParsedCommand {
+// parseSegmentAll parses every install command reachable from a single command
+// segment. After unwrapping prefixes (which may expand shell -c strings
+// containing operators), it re-splits on shell operators and checks each
+// resulting sub-segment.
+func parseSegmentAll(tokens []string, rawCommand string) []*api.ParsedCommand {
 	unwrapped := unwrapPrefixes(tokens)
 	if len(unwrapped) == 0 {
 		return nil
 	}
-	for _, seg := range commandSegments(unwrapped) {
-		if len(seg) == 0 {
-			continue
+	return parseUnwrappedTokensAll(unwrapped, rawCommand)
+}
+
+func parseUnwrappedTokensAll(tokens []string, rawCommand string) []*api.ParsedCommand {
+	segments := commandSegments(tokens)
+	if len(segments) > 1 {
+		var results []*api.ParsedCommand
+		for _, seg := range segments {
+			results = append(results, parseSegmentAll(seg, rawCommand)...)
 		}
-		if cmd := npm.Parse(seg, rawCommand); cmd != nil {
-			return cmd
-		}
-		if cmd := pnpm.Parse(seg, rawCommand); cmd != nil {
-			return cmd
-		}
+		return results
 	}
-	return nil
+
+	var results []*api.ParsedCommand
+	if cmd := npm.Parse(tokens, rawCommand); cmd != nil {
+		results = append(results, cmd)
+		return results
+	}
+	if cmd := pnpm.Parse(tokens, rawCommand); cmd != nil {
+		results = append(results, cmd)
+	}
+	return results
 }
 
 // ParseAll returns all install commands found across all command segments.
-// Unlike Parse (which returns only the first), this catches every install
-// in chained commands like "npm install lodash && npm install evil-pkg".
+// Unlike Parse (which returns only the first), this catches every install in
+// chained commands, including commands revealed by wrapper unwrapping such as
+// "bash -c 'npm install lodash && npm install evil-pkg'".
 func ParseAll(rawCommand string) []*api.ParsedCommand {
 	tokens := Tokenize(rawCommand)
 	if len(tokens) == 0 {
@@ -71,9 +75,7 @@ func ParseAll(rawCommand string) []*api.ParsedCommand {
 
 	var results []*api.ParsedCommand
 	for _, segment := range commandSegments(tokens) {
-		if cmd := parseSegment(segment, rawCommand); cmd != nil {
-			results = append(results, cmd)
-		}
+		results = append(results, parseSegmentAll(segment, rawCommand)...)
 	}
 	return results
 }

@@ -95,6 +95,7 @@ func TestVerifyReviewFindings(t *testing.T) {
 	noSpaceOpCmds := []string{
 		"ls&&npm install evil-pkg",
 		"ls;npm install evil-pkg",
+		"ls&npm install evil-pkg",
 		"ls||npm install evil-pkg",
 		"ls|npm install evil-pkg",
 		"echo done;pnpm add evil-pkg",

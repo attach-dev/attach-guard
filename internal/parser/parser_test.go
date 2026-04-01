@@ -20,6 +20,7 @@ func TestTokenize(t *testing.T) {
 		{"ls&&npm install axios", []string{"ls", "&&", "npm", "install", "axios"}},
 		{"ls||npm install axios", []string{"ls", "||", "npm", "install", "axios"}},
 		{"ls;npm install axios", []string{"ls", ";", "npm", "install", "axios"}},
+		{"ls&npm install axios", []string{"ls", "&", "npm", "install", "axios"}},
 		{"ls|npm install axios", []string{"ls", "|", "npm", "install", "axios"}},
 		// Newlines as command separators
 		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
@@ -229,6 +230,45 @@ func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
 		if pkg.Name == "&&" || pkg.Name == "npm" || pkg.Name == "install" || pkg.Name == "lodash" {
 			t.Errorf("shell operator or second command token %q should not be a package name", pkg.Name)
 		}
+	}
+}
+
+func TestParseAll_CapturesNestedShellSegments(t *testing.T) {
+	results := ParseAll("bash -c 'npm install safe-pkg && pnpm add evil-pkg'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("second parsed command = %#v, want pnpm add evil-pkg", results[1])
+	}
+}
+
+func TestParseAll_CapturesWrappedLaterShellSegments(t *testing.T) {
+	results := ParseAll("bash -c 'echo hi && env npm install lodash && sudo pnpm add react'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "lodash" {
+		t.Fatalf("first parsed command = %#v, want env npm install lodash", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want sudo pnpm add react", results[1])
+	}
+}
+
+func TestParseAll_CapturesBackgroundedSegments(t *testing.T) {
+	results := ParseAll("echo hi & npm install lodash && bash -c 'echo done & pnpm add react'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "lodash" {
+		t.Fatalf("first parsed command = %#v, want npm install lodash", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want pnpm add react", results[1])
 	}
 }
 

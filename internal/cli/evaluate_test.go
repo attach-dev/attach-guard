@@ -215,6 +215,130 @@ func TestEvaluate_DisabledPackageManager(t *testing.T) {
 	}
 }
 
+func TestEvaluate_MixedPackageManagers_EnabledSegmentStillEvaluated(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.PackageManagers.NPM = false
+	cfg.PackageManagers.PNPM = true
+	cfg.Policy.Denylist = []string{"evil-pkg"}
+	mock := provider.NewMockProvider()
+	mock.AddScore("evil-pkg", "1.0.0", 90, 90)
+	mock.Scores["evil-pkg@1.0.0"].PublishedAt = time.Now().Add(-240 * time.Hour)
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install safe-pkg && pnpm add evil-pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Deny {
+		t.Errorf("expected Deny for enabled pnpm segment, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "evil-pkg") {
+		t.Errorf("expected reason to mention evil-pkg, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_ChainedInsideBashC_EvaluatesAllInnerSegments(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.Allowlist = []string{"safe-pkg"}
+	cfg.Policy.Denylist = []string{"evil-pkg"}
+	mock := provider.NewMockProvider()
+	mock.AddScore("safe-pkg", "1.0.0", 90, 90)
+	mock.Scores["safe-pkg@1.0.0"].PublishedAt = time.Now().Add(-240 * time.Hour)
+	mock.AddScore("evil-pkg", "1.0.0", 90, 90)
+	mock.Scores["evil-pkg@1.0.0"].PublishedAt = time.Now().Add(-240 * time.Hour)
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "bash -c 'npm install safe-pkg@1.0.0 && npm install evil-pkg@1.0.0'", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Deny {
+		t.Errorf("expected Deny for later denied install inside bash -c, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "evil-pkg") {
+		t.Errorf("expected reason to mention evil-pkg, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_WrappedLaterSegmentInsideBashCDoesNotFailClosed(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	mock.AddScore("lodash", "4.17.21", 92, 88)
+	mock.Scores["lodash@4.17.21"].PublishedAt = time.Now().Add(-240 * time.Hour)
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "bash -c 'echo hi && env npm install lodash@4.17.21'", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Errorf("expected Allow for wrapped later segment inside bash -c, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEvaluate_BackgroundedInstallSegmentIsEvaluated(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	mock.AddScore("lodash", "4.17.21", 92, 88)
+	mock.Scores["lodash@4.17.21"].PublishedAt = time.Now().Add(-240 * time.Hour)
+
+	tests := []string{
+		"echo hi & npm install lodash@4.17.21",
+		"bash -c 'echo hi & npm install lodash@4.17.21'",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for backgrounded install %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+	}
+}
+
+func TestEvaluate_CommandNeedingRewriteButNotSafelyRewritableAsks(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("new-pkg", api.VersionInfo{
+		Version:     "2.0.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 85},
+	})
+	mock.AddVersion("new-pkg", api.VersionInfo{
+		Version:     "1.9.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	tests := []string{
+		"echo hello && npm install new-pkg",
+		"env NODE_ENV=production npm install new-pkg",
+		"sudo npm install new-pkg",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Ask {
+			t.Errorf("expected Ask for non-rewritable command %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Errorf("expected no rewritten command for %q, got %q", cmd, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "could not be safely rewritten") {
+			t.Errorf("expected reason about safe rewrite for %q, got %q", cmd, result.Reason)
+		}
+	}
+}
+
 func TestEvaluate_ReasonAggregation(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()

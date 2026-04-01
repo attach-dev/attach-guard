@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -58,24 +59,29 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		}, nil
 	}
 
-	// Use the first parsed command for package manager detection and rewriting,
-	// but merge packages from ALL segments so chained installs are fully evaluated.
-	cmd := cmds[0]
-	for _, extra := range cmds[1:] {
-		cmd.Packages = append(cmd.Packages, extra.Packages...)
+	enabledCmds := make([]*api.ParsedCommand, 0, len(cmds))
+	disabledPMs := make([]string, 0, len(cmds))
+	seenDisabledPMs := make(map[string]bool)
+	for _, cmd := range cmds {
+		if !e.packageManagerEnabled(cmd.PackageManager) {
+			if !seenDisabledPMs[cmd.PackageManager] {
+				disabledPMs = append(disabledPMs, cmd.PackageManager)
+				seenDisabledPMs[cmd.PackageManager] = true
+			}
+			continue
+		}
+		enabledCmds = append(enabledCmds, cmd)
 	}
-
-	// Check if the package manager is enabled in config
-	if (cmd.PackageManager == "npm" && !e.cfg.PackageManagers.NPM) ||
-		(cmd.PackageManager == "pnpm" && !e.cfg.PackageManagers.PNPM) {
+	if len(enabledCmds) == 0 {
 		return &api.EvaluationResult{
 			Decision:        api.Allow,
-			Reason:          fmt.Sprintf("%s is not enabled in config", cmd.PackageManager),
+			Reason:          disabledPackageManagersReason(disabledPMs),
 			OriginalCommand: rawCommand,
 		}, nil
 	}
 
 	provAvailable := e.prov.IsAvailable(ctx)
+	canRewrite := len(cmds) == 1 && len(enabledCmds) == 1 && rewriteEligible(rawCommand, enabledCmds[0])
 
 	var packages []api.PackageEvaluation
 	var overallDecision api.Decision = api.Allow
@@ -85,67 +91,75 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 	selector := versionselect.NewSelector(e.prov, e.engine, e.cfg)
 
-	for _, pkg := range cmd.Packages {
-		eval := api.PackageEvaluation{
-			Ecosystem: pkg.Ecosystem,
-			Name:      pkg.Name,
-			Requested: pkg.Version,
-		}
-
-		if !provAvailable {
-			// Handle provider unavailable
-			decision := e.engine.Evaluate(policy.Input{
-				Ecosystem:         pkg.Ecosystem,
-				Name:              pkg.Name,
-				ProviderAvailable: false,
-				Mode:              mode,
-			})
-			eval.SelectedVersion = pkg.Version
-			packages = append(packages, eval)
-			overallDecision = worseDecision(overallDecision, decision.Decision)
-			if decision.Decision != api.Allow {
-				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, decision.Reason))
+	for _, cmd := range enabledCmds {
+		for _, pkg := range cmd.Packages {
+			eval := api.PackageEvaluation{
+				Ecosystem: pkg.Ecosystem,
+				Name:      pkg.Name,
+				Requested: pkg.Version,
 			}
-			continue
-		}
 
-		result, err := selector.Select(ctx, pkg, mode)
-		if err != nil {
-			return nil, fmt.Errorf("evaluating %s: %w", pkg.Name, err)
-		}
-
-		if result.AllFailed {
-			eval.SelectedVersion = ""
-			packages = append(packages, eval)
-			overallDecision = api.Deny
-			reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s", pkg.Name))
-			continue
-		}
-
-		v := result.Selected
-		eval.SelectedVersion = v.Version
-		eval.Score = v.Score
-		eval.AgeHours = time.Since(v.PublishedAt).Hours()
-		eval.Alerts = v.Alerts
-		packages = append(packages, eval)
-
-		if pkg.Pinned {
-			// Use the selector's policy decision for the pinned version
-			overallDecision = worseDecision(overallDecision, result.Decision)
-			if result.Decision != api.Allow {
-				reasons = append(reasons, fmt.Sprintf("%s@%s: %s", pkg.Name, pkg.Version, result.Reason))
+			if !provAvailable {
+				// Handle provider unavailable
+				decision := e.engine.Evaluate(policy.Input{
+					Ecosystem:         pkg.Ecosystem,
+					Name:              pkg.Name,
+					ProviderAvailable: false,
+					Mode:              mode,
+				})
+				eval.SelectedVersion = pkg.Version
+				packages = append(packages, eval)
+				overallDecision = worseDecision(overallDecision, decision.Decision)
+				if decision.Decision != api.Allow {
+					reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, decision.Reason))
+				}
+				continue
 			}
-		} else {
+
+			result, err := selector.Select(ctx, pkg, mode)
+			if err != nil {
+				return nil, fmt.Errorf("evaluating %s: %w", pkg.Name, err)
+			}
+
+			if result.AllFailed {
+				eval.SelectedVersion = ""
+				packages = append(packages, eval)
+				overallDecision = api.Deny
+				reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s", pkg.Name))
+				continue
+			}
+
+			v := result.Selected
+			eval.SelectedVersion = v.Version
+			eval.Score = v.Score
+			eval.AgeHours = time.Since(v.PublishedAt).Hours()
+			eval.Alerts = v.Alerts
+			packages = append(packages, eval)
+
+			if pkg.Pinned {
+				// Use the selector's policy decision for the pinned version
+				overallDecision = worseDecision(overallDecision, result.Decision)
+				if result.Decision != api.Allow {
+					reasons = append(reasons, fmt.Sprintf("%s@%s: %s", pkg.Name, pkg.Version, result.Reason))
+				}
+				continue
+			}
+
 			// Unpinned — use version selection result
-			selectedVersions[pkg.Name] = v.Version
+			if canRewrite {
+				selectedVersions[pkg.Name] = v.Version
+			}
 
 			// Apply the selector's policy decision
 			overallDecision = worseDecision(overallDecision, result.Decision)
 
 			if result.WasRewritten {
 				anyRewritten = true
-				if !e.engine.ShouldAutoRewrite(mode) {
+				if !canRewrite || !e.engine.ShouldAutoRewrite(mode) {
 					overallDecision = worseDecision(overallDecision, api.Ask)
+				}
+				if !canRewrite {
+					reasons = append(reasons, fmt.Sprintf("%s: manual review required because the command could not be safely rewritten", pkg.Name))
 				}
 				reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
 			} else if result.Decision == api.Ask {
@@ -163,8 +177,8 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		Packages:        packages,
 	}
 
-	if anyRewritten {
-		evalResult.RewrittenCommand = rewrite.Command(cmd, selectedVersions)
+	if anyRewritten && canRewrite {
+		evalResult.RewrittenCommand = rewrite.Command(enabledCmds[0], selectedVersions)
 	}
 
 	// Audit log
@@ -172,8 +186,15 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 	if e.prov != nil {
 		provName = e.prov.Name()
 	}
+	auditPM := enabledCmds[0].PackageManager
+	for _, cmd := range enabledCmds[1:] {
+		if cmd.PackageManager != auditPM {
+			auditPM = "multiple"
+			break
+		}
+	}
 	_ = e.logger.Log(audit.Entry{
-		PackageManager:   cmd.PackageManager,
+		PackageManager:   auditPM,
 		OriginalCommand:  rawCommand,
 		RewrittenCommand: evalResult.RewrittenCommand,
 		Decision:         overallDecision,
@@ -205,4 +226,40 @@ func worseDecision(a, b api.Decision) api.Decision {
 		return b
 	}
 	return a
+}
+
+func (e *Evaluator) packageManagerEnabled(pm string) bool {
+	switch pm {
+	case "npm":
+		return e.cfg.PackageManagers.NPM
+	case "pnpm":
+		return e.cfg.PackageManagers.PNPM
+	default:
+		return true
+	}
+}
+
+func disabledPackageManagersReason(disabledPMs []string) string {
+	switch len(disabledPMs) {
+	case 0:
+		return "all detected package managers are disabled in config"
+	case 1:
+		return fmt.Sprintf("%s is not enabled in config", disabledPMs[0])
+	default:
+		return fmt.Sprintf("%s are not enabled in config", strings.Join(disabledPMs, ", "))
+	}
+}
+
+func rewriteEligible(rawCommand string, cmd *api.ParsedCommand) bool {
+	tokens := parser.Tokenize(rawCommand)
+	if len(tokens) == 0 || filepath.Base(tokens[0]) != cmd.PackageManager {
+		return false
+	}
+	for _, tok := range tokens[1:] {
+		switch tok {
+		case "&&", "||", ";", "|", "&":
+			return false
+		}
+	}
+	return true
 }
