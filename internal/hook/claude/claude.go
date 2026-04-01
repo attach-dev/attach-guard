@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // ReadHookInput reads and parses Claude hook JSON from a reader.

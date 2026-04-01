@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // Entry represents a single audit log entry.
@@ -63,7 +63,7 @@ func (l *Logger) Log(entry Entry) error {
 
 	// Ensure directory exists
 	dir := filepath.Dir(l.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 

@@ -4,7 +4,7 @@ package envdetect
 import (
 	"os"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // DetectMode determines the execution mode from the environment.

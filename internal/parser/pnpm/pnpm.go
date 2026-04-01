@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hammadtq/attach-dev/attach-guard/internal/parser/spec"
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/parser/spec"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // pnpm uses "add" for installing new packages
@@ -22,6 +22,13 @@ var flagsWithValue = map[string]bool{
 	"--tag":      true,
 }
 
+// globalFlagsWithValue are pnpm flags that appear before the action verb and take a value.
+var globalFlagsWithValue = map[string]bool{
+	"--filter": true,
+	"--dir":    true,
+	"-C":       true,
+}
+
 // Parse attempts to parse tokens as a pnpm install command.
 func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	if len(tokens) < 2 {
@@ -33,7 +40,29 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		return nil
 	}
 
-	action := tokens[1]
+	// Skip pre-action flags to find the action verb
+	var preActionFlags []string
+	actionIdx := -1
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		if strings.HasPrefix(tok, "-") {
+			preActionFlags = append(preActionFlags, tok)
+			if globalFlagsWithValue[tok] && i+1 < len(tokens) {
+				i++
+				preActionFlags = append(preActionFlags, tokens[i])
+			}
+			continue
+		}
+		// First non-flag token is the action verb
+		actionIdx = i
+		break
+	}
+
+	if actionIdx == -1 {
+		return nil
+	}
+
+	action := tokens[actionIdx]
 	if !installAliases[action] {
 		return nil
 	}
@@ -41,11 +70,12 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	cmd := &api.ParsedCommand{
 		PackageManager: "pnpm",
 		Action:         action,
+		PreActionFlags: preActionFlags,
 		IsInstall:      true,
 		RawCommand:     rawCommand,
 	}
 
-	i := 2
+	i := actionIdx + 1
 	for i < len(tokens) {
 		tok := tokens[i]
 
@@ -73,4 +103,3 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	return cmd
 }
-

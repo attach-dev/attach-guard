@@ -5,16 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/internal/audit"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/config"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/parser"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/policy"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/provider"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/rewrite"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/versionselect"
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/audit"
+	"github.com/attach-dev/attach-guard/internal/config"
+	"github.com/attach-dev/attach-guard/internal/parser"
+	"github.com/attach-dev/attach-guard/internal/policy"
+	"github.com/attach-dev/attach-guard/internal/provider"
+	"github.com/attach-dev/attach-guard/internal/rewrite"
+	"github.com/attach-dev/attach-guard/internal/versionselect"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // Evaluator runs package evaluation against policy.
@@ -61,7 +62,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 	var packages []api.PackageEvaluation
 	var overallDecision api.Decision = api.Allow
-	var overallReason string
+	var reasons []string
 	selectedVersions := make(map[string]string)
 	anyRewritten := false
 
@@ -85,7 +86,9 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			eval.SelectedVersion = pkg.Version
 			packages = append(packages, eval)
 			overallDecision = worseDecision(overallDecision, decision.Decision)
-			overallReason = decision.Reason
+			if decision.Decision != api.Allow {
+				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, decision.Reason))
+			}
 			continue
 		}
 
@@ -98,7 +101,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			eval.SelectedVersion = ""
 			packages = append(packages, eval)
 			overallDecision = api.Deny
-			overallReason = fmt.Sprintf("no acceptable version found for %s", pkg.Name)
+			reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s", pkg.Name))
 			continue
 		}
 
@@ -126,22 +129,29 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			decision := e.engine.Evaluate(input)
 			overallDecision = worseDecision(overallDecision, decision.Decision)
 			if decision.Decision != api.Allow {
-				overallReason = decision.Reason
+				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, decision.Reason))
 			}
 		} else {
 			// Unpinned — use version selection result
 			selectedVersions[pkg.Name] = v.Version
+
+			// Apply the selector's policy decision
+			overallDecision = worseDecision(overallDecision, result.Decision)
+			if result.Decision == api.Ask {
+				reasons = append(reasons, fmt.Sprintf("%s: scores are in review range", pkg.Name))
+			}
+
 			if result.WasRewritten {
 				anyRewritten = true
-				if e.engine.ShouldAutoRewrite(mode) {
-					// Auto-rewrite enabled — silently allow the rewritten version
-				} else {
+				if !e.engine.ShouldAutoRewrite(mode) {
 					overallDecision = worseDecision(overallDecision, api.Ask)
-					overallReason = fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version)
+					reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
 				}
 			}
 		}
 	}
+
+	overallReason := strings.Join(reasons, "; ")
 
 	evalResult := &api.EvaluationResult{
 		Decision:        overallDecision,

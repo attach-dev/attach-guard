@@ -2,6 +2,7 @@
 package execx
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,8 +26,7 @@ func FindRealBinary(name string) (string, error) {
 		}
 	}
 
-	// Fallback to exec.LookPath (will find shim too, but better than nothing)
-	return exec.LookPath(name)
+	return "", fmt.Errorf("could not find %s in PATH (excluding shim directory)", name)
 }
 
 // ShimDir returns the directory where attach-guard shims are installed.

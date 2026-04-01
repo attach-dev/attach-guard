@@ -93,7 +93,8 @@ type ParsedCommand struct {
 	PackageManager string           `json:"package_manager"` // npm, pnpm
 	Action         string           `json:"action"`          // install, add, etc.
 	Packages       []PackageRequest `json:"packages"`
-	Flags          []string         `json:"flags"`
+	PreActionFlags []string         `json:"pre_action_flags"` // flags before the action verb (e.g. --filter web)
+	Flags          []string         `json:"flags"`            // flags after the action verb (e.g. --save-dev)
 	IsInstall      bool             `json:"is_install"`
 	RawCommand     string           `json:"raw_command"`
 }

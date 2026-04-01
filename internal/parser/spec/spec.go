@@ -4,7 +4,7 @@ package spec
 import (
 	"strings"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // ParsePackageSpec parses a package spec like "axios", "axios@1.7.0", "@scope/pkg@^2.0.0".

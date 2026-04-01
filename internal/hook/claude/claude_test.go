@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 func TestReadHookInput(t *testing.T) {

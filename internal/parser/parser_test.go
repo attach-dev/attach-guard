@@ -87,6 +87,35 @@ func TestParse_NPM(t *testing.T) {
 	}
 }
 
+func TestParse_NPM_PreActionFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+		preFlags int
+	}{
+		{"npm prefix flag", "npm --prefix ./app install axios", "axios", 2},
+		{"npm legacy peer deps", "npm --legacy-peer-deps install lodash", "lodash", 1},
+		{"npm verbose", "npm --verbose install lodash", "lodash", 1},
+		{"npm registry flag", "npm --registry https://r.example.com install axios", "axios", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+			if len(result.PreActionFlags) != tt.preFlags {
+				t.Errorf("Parse(%q).PreActionFlags = %v (len %d), want len %d", tt.command, result.PreActionFlags, len(result.PreActionFlags), tt.preFlags)
+			}
+		})
+	}
+}
+
 func TestParse_PNPM(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -124,11 +153,82 @@ func TestParse_PNPM(t *testing.T) {
 	}
 }
 
+func TestParse_PNPM_PreActionFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+	}{
+		{"pnpm filter add", "pnpm --filter web add react", "react"},
+		{"pnpm dir add", "pnpm --dir apps/web add zod", "zod"},
+		{"pnpm -C add", "pnpm -C apps/web add zod", "zod"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+			if len(result.PreActionFlags) == 0 {
+				t.Errorf("Parse(%q).PreActionFlags should not be empty", tt.command)
+			}
+		})
+	}
+}
+
+func TestParse_ShellOperators(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+		pkgCount int
+	}{
+		{"chained &&", "npm install axios && npm install lodash", "axios", 1},
+		{"chained semicolon", "npm install axios; npm install lodash", "axios", 1},
+		{"piped", "npm install axios | tee log.txt", "axios", 1},
+		{"or chain", "npm install axios || echo failed", "axios", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if len(result.Packages) != tt.pkgCount {
+				t.Errorf("Parse(%q) found %d packages, want %d", tt.command, len(result.Packages), tt.pkgCount)
+			}
+			if result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %q, want %q", tt.command, result.Packages[0].Name, tt.pkgName)
+			}
+		})
+	}
+}
+
+func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
+	// Ensure shell operators are NOT treated as package names
+	result := Parse("npm install axios && npm install lodash")
+	if result == nil {
+		t.Fatal("expected parsed result")
+	}
+	for _, pkg := range result.Packages {
+		if pkg.Name == "&&" || pkg.Name == "npm" || pkg.Name == "install" || pkg.Name == "lodash" {
+			t.Errorf("shell operator or second command token %q should not be a package name", pkg.Name)
+		}
+	}
+}
+
 func TestIsInstallCommand(t *testing.T) {
 	installCmds := []string{
 		"npm install axios",
 		"npm i lodash",
 		"pnpm add express",
+		"pnpm --filter web add react",
+		"npm --prefix ./app install axios",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {

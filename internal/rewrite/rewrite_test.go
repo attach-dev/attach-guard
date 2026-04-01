@@ -3,7 +3,7 @@ package rewrite
 import (
 	"testing"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 func TestCommand(t *testing.T) {
@@ -51,7 +51,7 @@ func TestCommand(t *testing.T) {
 			expected: "pnpm add express@4.18.2",
 		},
 		{
-			name: "preserves flags",
+			name: "preserves post-action flags",
 			cmd: &api.ParsedCommand{
 				PackageManager: "npm",
 				Action:         "install",
@@ -62,6 +62,33 @@ func TestCommand(t *testing.T) {
 			},
 			versions: map[string]string{"jest": "29.7.0"},
 			expected: "npm install jest@29.7.0 --save-dev",
+		},
+		{
+			name: "preserves pre-action flags before action",
+			cmd: &api.ParsedCommand{
+				PackageManager: "pnpm",
+				Action:         "add",
+				PreActionFlags: []string{"--filter", "web"},
+				Packages: []api.PackageRequest{
+					{Name: "react", RawSpec: "react"},
+				},
+			},
+			versions: map[string]string{"react": "18.2.0"},
+			expected: "pnpm --filter web add react@18.2.0",
+		},
+		{
+			name: "both pre and post action flags",
+			cmd: &api.ParsedCommand{
+				PackageManager: "npm",
+				Action:         "install",
+				PreActionFlags: []string{"--prefix", "./app"},
+				Packages: []api.PackageRequest{
+					{Name: "axios", RawSpec: "axios"},
+				},
+				Flags: []string{"--save-dev"},
+			},
+			versions: map[string]string{"axios": "1.7.0"},
+			expected: "npm --prefix ./app install axios@1.7.0 --save-dev",
 		},
 	}
 

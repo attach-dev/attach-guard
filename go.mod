@@ -1,4 +1,4 @@
-module github.com/hammadtq/attach-dev/attach-guard
+module github.com/attach-dev/attach-guard
 
 go 1.18
 

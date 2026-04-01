@@ -4,7 +4,7 @@ package provider
 import (
 	"context"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // Provider is the interface that risk intelligence providers must implement.
