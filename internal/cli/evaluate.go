@@ -38,8 +38,8 @@ func NewEvaluator(cfg *config.Config, prov provider.Provider) *Evaluator {
 
 // Evaluate evaluates a raw command string and returns the result.
 func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mode) (*api.EvaluationResult, error) {
-	cmd := parser.Parse(rawCommand)
-	if cmd == nil {
+	cmds := parser.ParseAll(rawCommand)
+	if len(cmds) == 0 {
 		// Parser could not fully classify the command. Check if it still
 		// looks like a package install wrapped in an unrecognized prefix.
 		// If so, block rather than silently allowing — fail closed.
@@ -56,6 +56,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			Reason:          "not a guarded install command",
 			OriginalCommand: rawCommand,
 		}, nil
+	}
+
+	// Use the first parsed command for package manager detection and rewriting,
+	// but merge packages from ALL segments so chained installs are fully evaluated.
+	cmd := cmds[0]
+	for _, extra := range cmds[1:] {
+		cmd.Packages = append(cmd.Packages, extra.Packages...)
 	}
 
 	// Check if the package manager is enabled in config

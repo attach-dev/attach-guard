@@ -30,7 +30,23 @@ func Parse(rawCommand string) *api.ParsedCommand {
 	}
 
 	for _, segment := range commandSegments(tokens) {
-		seg := unwrapPrefixes(segment)
+		if cmd := parseSegment(segment, rawCommand); cmd != nil {
+			return cmd
+		}
+	}
+
+	return nil
+}
+
+// parseSegment tries to parse a single command segment. After unwrapping
+// prefixes (which may expand shell -c strings containing operators), it
+// re-splits on shell operators and checks each sub-segment.
+func parseSegment(tokens []string, rawCommand string) *api.ParsedCommand {
+	unwrapped := unwrapPrefixes(tokens)
+	if len(unwrapped) == 0 {
+		return nil
+	}
+	for _, seg := range commandSegments(unwrapped) {
 		if len(seg) == 0 {
 			continue
 		}
@@ -41,8 +57,25 @@ func Parse(rawCommand string) *api.ParsedCommand {
 			return cmd
 		}
 	}
-
 	return nil
+}
+
+// ParseAll returns all install commands found across all command segments.
+// Unlike Parse (which returns only the first), this catches every install
+// in chained commands like "npm install lodash && npm install evil-pkg".
+func ParseAll(rawCommand string) []*api.ParsedCommand {
+	tokens := Tokenize(rawCommand)
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	var results []*api.ParsedCommand
+	for _, segment := range commandSegments(tokens) {
+		if cmd := parseSegment(segment, rawCommand); cmd != nil {
+			results = append(results, cmd)
+		}
+	}
+	return results
 }
 
 // IsInstallCommand returns true if the raw command is a guarded install command.
@@ -204,12 +237,17 @@ func looksLikeInstallTokens(tokens []string) bool {
 				// bash script.sh ... — stop, these are script arguments
 				return false
 			}
-			// -c was found — re-tokenize the command string and check inside it.
+			// -c was found — re-tokenize the command string and check each
+			// segment (the inner string may contain && or ; operators).
 			// Any tokens after the command string are positional args ($0, $1),
 			// not commands, so stop scanning regardless of the result.
 			if i < len(tokens) {
 				inner := Tokenize(tokens[i])
-				return looksLikeInstallTokens(inner)
+				for _, seg := range commandSegments(inner) {
+					if looksLikeInstallTokens(seg) {
+						return true
+					}
+				}
 			}
 			return false
 		}
@@ -386,14 +424,12 @@ func unwrapPrefixes(tokens []string) []string {
 				return saved
 			}
 			if foundC && len(tokens) > 0 {
-				// The next token is the command string; re-tokenize it
-				// and truncate at shell operators so chained commands inside
-				// the -c string (e.g., "npm install axios && rm -rf /")
-				// don't leak into the parser.
+				// The next token is the command string; re-tokenize it.
 				// Any tokens after the command string are positional args
 				// ($0, $1, ...) for the shell, NOT commands — discard them.
+				// The caller (parseSegment) handles splitting at shell
+				// operators inside the expanded -c string.
 				inner := Tokenize(tokens[0])
-				inner = firstCommandSegment(inner)
 				tokens = inner
 				continue
 			}
