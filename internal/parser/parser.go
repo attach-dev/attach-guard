@@ -75,11 +75,32 @@ var pmBinaries = map[string]bool{
 //
 // The heuristic requires that a PM binary token appears before an install verb
 // token (i.e., "npm install", not "install npm"), which matches the actual
-// command syntax of npm/pnpm.
+// command syntax of npm/pnpm. It also checks inside compound tokens (e.g.,
+// a quoted shell -c argument like "npm install axios") by re-tokenizing them.
 func LooksLikeInstall(rawCommand string) bool {
 	tokens := Tokenize(rawCommand)
 	tokens = firstCommandSegment(tokens)
 
+	if looksLikeInstallTokens(tokens) {
+		return true
+	}
+
+	// Second pass: check inside compound tokens that may contain embedded
+	// commands (e.g., from shell -c 'npm install axios').
+	for _, tok := range tokens {
+		if strings.Contains(tok, " ") {
+			inner := Tokenize(tok)
+			if looksLikeInstallTokens(inner) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// looksLikeInstallTokens checks if a flat token list contains a PM binary
+// followed by an install verb.
+func looksLikeInstallTokens(tokens []string) bool {
 	pmSeen := false
 	for _, tok := range tokens {
 		base := filepath.Base(tok)
@@ -142,6 +163,46 @@ func unwrapPrefixes(tokens []string) []string {
 				break
 			}
 			continue
+		}
+
+		// Shell wrappers (bash -c '...', sh -c '...', zsh -c '...')
+		// Extract the command string and re-tokenize it.
+		if base == "bash" || base == "sh" || base == "zsh" {
+			tokens = tokens[1:]
+			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
+			foundC := false
+			for len(tokens) > 0 {
+				flag := tokens[0]
+				tokens = tokens[1:]
+				if flag == "-c" {
+					foundC = true
+					break
+				}
+				// Combined short flags like -lc, -xc — check if 'c' is the last char
+				if strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "--") &&
+					len(flag) > 2 && flag[len(flag)-1] == 'c' {
+					foundC = true
+					break
+				}
+				// Other flags like -l, -i, -x — skip
+				if strings.HasPrefix(flag, "-") {
+					continue
+				}
+				// Non-flag, non -c token — not a pattern we recognize
+				return tokens
+			}
+			if foundC && len(tokens) > 0 {
+				// The next token is the command string; re-tokenize it
+				inner := Tokenize(tokens[0])
+				// Append any remaining tokens (rare but possible)
+				if len(tokens) > 1 {
+					inner = append(inner, tokens[1:]...)
+				}
+				tokens = inner
+				continue
+			}
+			// Ran out of tokens after shell binary
+			return tokens
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags

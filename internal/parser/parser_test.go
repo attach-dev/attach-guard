@@ -248,6 +248,12 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"npx npm install", "npx npm install axios", "axios"},
 		{"npx --yes npm install", "npx --yes npm install axios", "axios"},
 		{"command -v skipped flags", "command npm install axios", "axios"},
+		{"bash -c npm install", "bash -c 'npm install axios'", "axios"},
+		{"sh -c npm install", "sh -c 'npm install axios'", "axios"},
+		{"zsh -c npm install", "zsh -lc 'npm install axios'", "axios"},
+		{"bash -c pnpm add", "bash -c 'pnpm add react'", "react"},
+		{"sh -c with double quotes", `sh -c "npm install lodash"`, "lodash"},
+		{"sudo bash -c", "sudo bash -c 'npm install axios'", "axios"},
 	}
 
 	for _, tt := range tests {
@@ -287,6 +293,8 @@ func TestLooksLikeInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"watch pnpm add react",
+		"bash -c 'npm install axios'",
+		"sh -c 'pnpm add react'",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
