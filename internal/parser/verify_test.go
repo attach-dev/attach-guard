@@ -46,7 +46,37 @@ func TestVerifyReviewFindings(t *testing.T) {
 		}
 	}
 
-	// Finding 4: command -v is introspection, not execution
+	// Finding 4: chained commands — install in second/later segment must be caught
+	chainedCmds := []string{
+		"ls && npm install evil-pkg",
+		"echo hello; npm install evil-pkg",
+		"echo hello || npm install evil-pkg",
+		"cat /etc/hosts | npm install evil-pkg",
+		"mkdir -p foo && cd foo && npm install evil-pkg",
+		"echo done; pnpm add evil-pkg",
+	}
+	for _, cmd := range chainedCmds {
+		if Parse(cmd) == nil {
+			t.Errorf("Parse(%q) = nil, want install command", cmd)
+		}
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	// Finding 4b: chained commands — first segment is non-install, should still allow when no install anywhere
+	nonInstallChained := []string{
+		"ls && echo hello",
+		"mkdir foo; cd foo",
+		"echo npm && echo install",
+	}
+	for _, cmd := range nonInstallChained {
+		if Parse(cmd) != nil {
+			t.Errorf("Parse(%q) should be nil (no install in any segment)", cmd)
+		}
+	}
+
+	// Finding 5: command -v is introspection, not execution
 	introspecCmds := []string{
 		"command -v npm",
 		"command -v npm install axios",

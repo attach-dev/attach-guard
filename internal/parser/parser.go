@@ -21,29 +21,25 @@ var shellOperators = map[string]bool{
 
 // Parse attempts to parse a raw command string as a package manager install command.
 // Returns nil if the command is not a recognized install command.
+// It checks ALL command segments separated by shell operators (&&, ||, ;, |)
+// so that chained commands like "ls && npm install evil-pkg" are caught.
 func Parse(rawCommand string) *api.ParsedCommand {
 	tokens := Tokenize(rawCommand)
 	if len(tokens) == 0 {
 		return nil
 	}
 
-	// Truncate at the first shell operator to only parse the first command segment
-	tokens = firstCommandSegment(tokens)
-
-	// Strip common command prefixes (sudo, env, env-var assignments)
-	tokens = unwrapPrefixes(tokens)
-	if len(tokens) == 0 {
-		return nil
-	}
-
-	// Try npm first
-	if cmd := npm.Parse(tokens, rawCommand); cmd != nil {
-		return cmd
-	}
-
-	// Try pnpm
-	if cmd := pnpm.Parse(tokens, rawCommand); cmd != nil {
-		return cmd
+	for _, segment := range commandSegments(tokens) {
+		seg := unwrapPrefixes(segment)
+		if len(seg) == 0 {
+			continue
+		}
+		if cmd := npm.Parse(seg, rawCommand); cmd != nil {
+			return cmd
+		}
+		if cmd := pnpm.Parse(seg, rawCommand); cmd != nil {
+			return cmd
+		}
 	}
 
 	return nil
@@ -81,8 +77,12 @@ var pmBinaries = map[string]bool{
 // by unwrapPrefixes in Parse(), so they don't need a heuristic fallback.
 func LooksLikeInstall(rawCommand string) bool {
 	tokens := Tokenize(rawCommand)
-	tokens = firstCommandSegment(tokens)
-	return looksLikeInstallTokens(tokens)
+	for _, segment := range commandSegments(tokens) {
+		if looksLikeInstallTokens(segment) {
+			return true
+		}
+	}
+	return false
 }
 
 // nonWrapperBinaries are commands that take arguments as text, not as commands
@@ -395,6 +395,34 @@ func isEnvVarAssignment(tok string) bool {
 		return false
 	}
 	return true
+}
+
+// commandSegments splits tokens at shell operators into separate command segments.
+// For example, ["ls", "&&", "npm", "install", "axios"] returns [["ls"], ["npm", "install", "axios"]].
+// Also handles trailing semicolons attached to tokens (e.g., "axios;" becomes "axios" ending a segment).
+func commandSegments(tokens []string) [][]string {
+	var segments [][]string
+	start := 0
+	for i, tok := range tokens {
+		if shellOperators[tok] {
+			if i > start {
+				segments = append(segments, tokens[start:i])
+			}
+			start = i + 1
+			continue
+		}
+		if strings.HasSuffix(tok, ";") {
+			seg := make([]string, i-start+1)
+			copy(seg, tokens[start:i])
+			seg[i-start] = strings.TrimSuffix(tok, ";")
+			segments = append(segments, seg)
+			start = i + 1
+		}
+	}
+	if start < len(tokens) {
+		segments = append(segments, tokens[start:])
+	}
+	return segments
 }
 
 // firstCommandSegment returns tokens up to the first shell operator.
