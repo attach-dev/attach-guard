@@ -16,6 +16,12 @@ import (
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
+// exitCodeHookBlock is the exit code that tells Claude Code to block the tool
+// call. Claude Code treats exit code 2 as a blocking hook error; any other
+// non-zero exit is non-blocking (fail-open). We use this in hook mode so that
+// internal errors (config, provider, evaluation) fail closed.
+const exitCodeHookBlock = 2
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -34,7 +40,7 @@ func main() {
 			cmdHook()
 		} else {
 			fmt.Fprintf(os.Stderr, "unknown hook subcommand: %s\nusage: attach-guard hook [run]\n", os.Args[2])
-			os.Exit(1)
+			os.Exit(exitCodeHookBlock)
 		}
 	case "config":
 		cmdConfig()
@@ -70,7 +76,7 @@ func cmdEvaluate() {
 	rawCommand := strings.Join(os.Args[2:], " ")
 	mode := envdetect.DetectMode()
 
-	cfg, prov := loadConfigAndProvider()
+	cfg, prov := loadConfigAndProvider(1)
 	eval := cli.NewEvaluator(cfg, prov)
 
 	data, err := eval.EvaluateJSON(context.Background(), rawCommand, mode)
@@ -83,11 +89,13 @@ func cmdEvaluate() {
 }
 
 // cmdHook reads Claude Code hook JSON from stdin and writes hook output.
+// All error paths use exitCodeHookBlock (2) so Claude Code blocks the tool call
+// on internal failures rather than failing open.
 func cmdHook() {
 	input, err := claude.ReadHookInput(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error reading hook input: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCodeHookBlock)
 	}
 
 	if !claude.IsGuardedTool(input.ToolName) {
@@ -101,19 +109,19 @@ func cmdHook() {
 	}
 
 	mode := api.ModeClaude
-	cfg, prov := loadConfigAndProvider()
+	cfg, prov := loadConfigAndProvider(exitCodeHookBlock)
 	eval := cli.NewEvaluator(cfg, prov)
 
 	result, err := eval.Evaluate(context.Background(), input.ToolInput.Command, mode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error evaluating: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCodeHookBlock)
 	}
 
 	out, err := claude.FormatHookOutput(result)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCodeHookBlock)
 	}
 
 	fmt.Println(string(out))
@@ -142,11 +150,12 @@ func cmdConfig() {
 }
 
 // loadConfigAndProvider loads configuration and creates the appropriate provider.
-func loadConfigAndProvider() (*config.Config, provider.Provider) {
+// exitCode controls the exit code on failure so hook mode can fail closed (exit 2).
+func loadConfigAndProvider(exitCode int) (*config.Config, provider.Provider) {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitCode)
 	}
 
 	var prov provider.Provider
@@ -163,7 +172,7 @@ func loadConfigAndProvider() (*config.Config, provider.Provider) {
 		prov = provider.NewMockProvider()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown provider: %s\n", cfg.Provider.Kind)
-		os.Exit(1)
+		os.Exit(exitCode)
 	}
 
 	return cfg, prov

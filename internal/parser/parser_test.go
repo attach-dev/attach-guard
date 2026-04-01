@@ -242,6 +242,12 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"env then sudo", "env NODE_ENV=prod sudo npm install axios", "axios"},
 		{"empty env var value", "VAR= npm install axios", "axios"},
 		{"path-qualified env", "/usr/bin/env npm install axios", "axios"},
+		{"command npm install", "command npm install axios", "axios"},
+		{"time npm install", "time npm install axios", "axios"},
+		{"nice npm install", "nice -n 10 npm install axios", "axios"},
+		{"npx npm install", "npx npm install axios", "axios"},
+		{"npx --yes npm install", "npx --yes npm install axios", "axios"},
+		{"command -v skipped flags", "command npm install axios", "axios"},
 	}
 
 	for _, tt := range tests {
@@ -263,6 +269,9 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		"sudo ls -la",
 		"env echo hello",
 		"FOO=bar echo test",
+		"npx create-react-app my-app",
+		"command -v npm",
+		"time echo hello",
 	}
 	for _, cmd := range nonInstalls {
 		if result := Parse(cmd); result != nil {

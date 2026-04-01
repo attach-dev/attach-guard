@@ -42,12 +42,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	// Check if first token is npm (could be a path like /usr/local/bin/npm)
 	base := filepath.Base(tokens[0])
-	if base != "npm" && base != "npx" {
-		return nil
-	}
-
-	// npx is not an install command we guard
-	if base == "npx" {
+	if base != "npm" {
 		return nil
 	}
 

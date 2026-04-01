@@ -54,15 +54,27 @@ func IsInstallCommand(rawCommand string) bool {
 	return Parse(rawCommand) != nil
 }
 
-// unwrapPrefixes strips common command prefixes like sudo, env, and
-// environment variable assignments (KEY=val) so the underlying package
-// manager command is visible to the parsers.
+// transparentWrappers are commands that simply exec their arguments.
+// We strip these (and their flags) to reach the underlying PM command.
+var transparentWrappers = map[string]bool{
+	"sudo":    true,
+	"env":     true,
+	"command": true,
+	"time":    true,
+	"nice":    true,
+	"npx":     true,
+}
+
+// unwrapPrefixes strips common command prefixes like sudo, env, command, time,
+// nice, npx, and environment variable assignments (KEY=val) so the underlying
+// package manager command is visible to the parsers.
 func unwrapPrefixes(tokens []string) []string {
 	for len(tokens) > 0 {
 		tok := tokens[0]
+		base := filepath.Base(tok)
 
 		// sudo — skip it (and optional -E, -u user, etc.)
-		if filepath.Base(tok) == "sudo" {
+		if base == "sudo" {
 			tokens = tokens[1:]
 			// Skip sudo flags
 			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
@@ -77,7 +89,7 @@ func unwrapPrefixes(tokens []string) []string {
 		}
 
 		// env — skip it and any env flags / VAR=val assignments
-		if filepath.Base(tok) == "env" {
+		if base == "env" {
 			tokens = tokens[1:]
 			// Skip env flags and VAR=val pairs
 			for len(tokens) > 0 {
@@ -90,6 +102,21 @@ func unwrapPrefixes(tokens []string) []string {
 					continue
 				}
 				break
+			}
+			continue
+		}
+
+		// command, time, nice, npx — skip the wrapper and any leading flags
+		if base == "command" || base == "time" || base == "nice" || base == "npx" {
+			tokens = tokens[1:]
+			// Skip flags (e.g., "nice -n 10", "command -v", "npx --yes")
+			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
+				flag := tokens[0]
+				tokens = tokens[1:]
+				// nice -n takes a value; npx --package takes a value
+				if (flag == "-n" || flag == "--package" || flag == "-p") && len(tokens) > 0 {
+					tokens = tokens[1:]
+				}
 			}
 			continue
 		}
