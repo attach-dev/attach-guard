@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/internal/config"
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/config"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 func TestEngine_Allow(t *testing.T) {

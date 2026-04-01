@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/internal/config"
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/config"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // Engine evaluates packages against policy.

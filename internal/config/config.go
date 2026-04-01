@@ -12,7 +12,6 @@ import (
 
 // Config is the top-level configuration.
 type Config struct {
-	Mode            string          `yaml:"mode"`
 	Provider        ProviderConfig  `yaml:"provider"`
 	Policy          PolicyConfig    `yaml:"policy"`
 	PackageManagers PMConfig        `yaml:"package_managers"`
@@ -40,8 +39,8 @@ type PolicyConfig struct {
 
 // ProviderUnavailableConfig defines behavior when the provider is down.
 type ProviderUnavailableConfig struct {
-	Local string `yaml:"local"` // ask or deny
-	CI    string `yaml:"ci"`    // ask or deny
+	Local string `yaml:"local"` // allow, ask, or deny
+	CI    string `yaml:"ci"`    // allow, ask, or deny
 }
 
 // AutoRewriteConfig defines whether auto-rewrite is allowed.
@@ -64,7 +63,6 @@ type LoggingConfig struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		Mode: "ask",
 		Provider: ProviderConfig{
 			Kind:        "socket",
 			APITokenEnv: "SOCKET_API_TOKEN",
@@ -152,9 +150,6 @@ func mergeFromFile(cfg *Config, path string) error {
 }
 
 func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("ATTACH_GUARD_MODE"); v != "" {
-		cfg.Mode = v
-	}
 	if v := os.Getenv("ATTACH_GUARD_LOG_PATH"); v != "" {
 		cfg.Logging.Path = v
 	}
@@ -171,8 +166,8 @@ func WriteDefault(path string) error {
 		return err
 	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return os.WriteFile(path, data, 0o600)
 }

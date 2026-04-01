@@ -93,7 +93,8 @@ type ParsedCommand struct {
 	PackageManager string           `json:"package_manager"` // npm, pnpm
 	Action         string           `json:"action"`          // install, add, etc.
 	Packages       []PackageRequest `json:"packages"`
-	Flags          []string         `json:"flags"`
+	PreActionFlags []string         `json:"pre_action_flags"` // flags before the action verb (e.g. --filter web)
+	Flags          []string         `json:"flags"`            // flags after the action verb (e.g. --save-dev)
 	IsInstall      bool             `json:"is_install"`
 	RawCommand     string           `json:"raw_command"`
 }
@@ -108,10 +109,15 @@ type HookInput struct {
 }
 
 // HookOutput is the JSON structure returned to Claude Code from hooks.
+// Uses the hookSpecificOutput contract for PreToolUse events.
 type HookOutput struct {
-	Decision     string `json:"decision"`               // allow, ask, deny
-	Reason       string `json:"reason,omitempty"`
-	UpdatedInput *struct {
-		Command string `json:"command"`
-	} `json:"updatedInput,omitempty"`
+	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
+}
+
+// HookSpecificOutput holds the PreToolUse-specific output fields.
+type HookSpecificOutput struct {
+	HookEventName            string      `json:"hookEventName"`
+	PermissionDecision       string      `json:"permissionDecision"`                 // allow, ask, deny
+	PermissionDecisionReason string      `json:"permissionDecisionReason,omitempty"`
+	UpdatedInput             interface{} `json:"updatedInput,omitempty"`
 }

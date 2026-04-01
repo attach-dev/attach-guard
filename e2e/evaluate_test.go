@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/internal/cli"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/config"
-	"github.com/hammadtq/attach-dev/attach-guard/internal/provider"
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/cli"
+	"github.com/attach-dev/attach-guard/internal/config"
+	"github.com/attach-dev/attach-guard/internal/provider"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // setupMock creates a mock provider with a realistic set of packages.
@@ -58,8 +58,12 @@ func setupMock() *provider.MockProvider {
 		Score:       api.PackageScore{SupplyChain: 5, Overall: 5},
 		Alerts:      []api.PackageAlert{{Severity: "critical", Title: "Known malware", Category: "malware"}},
 	})
-	mock.AddScore("malware-pkg", "1.0.0", 5, 5)
-	mock.Scores["malware-pkg@1.0.0"].Alerts = []api.PackageAlert{{Severity: "critical", Title: "Known malware", Category: "malware"}}
+	mock.Scores["malware-pkg@1.0.0"] = &api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 5, Overall: 5},
+		Alerts:      []api.PackageAlert{{Severity: "critical", Title: "Known malware", Category: "malware"}},
+	}
 
 	return mock
 }

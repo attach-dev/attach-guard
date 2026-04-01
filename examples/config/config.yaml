@@ -1,4 +1,3 @@
-mode: ask
 provider:
   kind: socket
   api_token_env: SOCKET_API_TOKEN
@@ -14,6 +13,8 @@ policy:
   auto_rewrite_unpinned:
     local: false
     ci: false
+  allowlist: []
+  denylist: []
 package_managers:
   npm: true
   pnpm: true

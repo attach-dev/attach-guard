@@ -16,6 +16,17 @@ func TestTokenize(t *testing.T) {
 		{"npm install --save-dev jest", []string{"npm", "install", "--save-dev", "jest"}},
 		{"", nil},
 		{"npm install @scope/pkg@^2.0.0", []string{"npm", "install", "@scope/pkg@^2.0.0"}},
+		// Shell operators without spaces
+		{"ls&&npm install axios", []string{"ls", "&&", "npm", "install", "axios"}},
+		{"ls||npm install axios", []string{"ls", "||", "npm", "install", "axios"}},
+		{"ls;npm install axios", []string{"ls", ";", "npm", "install", "axios"}},
+		{"ls&npm install axios", []string{"ls", "&", "npm", "install", "axios"}},
+		{"ls|npm install axios", []string{"ls", "|", "npm", "install", "axios"}},
+		// Newlines as command separators
+		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
+		// Operators inside quotes should NOT be split
+		{`echo "a&&b"`, []string{"echo", "a&&b"}},
+		{`echo 'a;b'`, []string{"echo", "a;b"}},
 	}
 
 	for _, tt := range tests {
@@ -36,12 +47,12 @@ func TestTokenize(t *testing.T) {
 
 func TestParse_NPM(t *testing.T) {
 	tests := []struct {
-		name       string
-		command    string
-		isInstall  bool
-		pkgCount   int
-		pkgName    string
-		pkgPinned  bool
+		name      string
+		command   string
+		isInstall bool
+		pkgCount  int
+		pkgName   string
+		pkgPinned bool
 	}{
 		{"npm install single", "npm install axios", true, 1, "axios", false},
 		{"npm i alias", "npm i lodash", true, 1, "lodash", false},
@@ -87,6 +98,35 @@ func TestParse_NPM(t *testing.T) {
 	}
 }
 
+func TestParse_NPM_PreActionFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		pkgName  string
+		preFlags int
+	}{
+		{"npm prefix flag", "npm --prefix ./app install axios", "axios", 2},
+		{"npm legacy peer deps", "npm --legacy-peer-deps install lodash", "lodash", 1},
+		{"npm verbose", "npm --verbose install lodash", "lodash", 1},
+		{"npm registry flag", "npm --registry https://r.example.com install axios", "axios", 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+			if len(result.PreActionFlags) != tt.preFlags {
+				t.Errorf("Parse(%q).PreActionFlags = %v (len %d), want len %d", tt.command, result.PreActionFlags, len(result.PreActionFlags), tt.preFlags)
+			}
+		})
+	}
+}
+
 func TestParse_PNPM(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -124,11 +164,239 @@ func TestParse_PNPM(t *testing.T) {
 	}
 }
 
+func TestParse_PNPM_PreActionFlags(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+	}{
+		{"pnpm filter add", "pnpm --filter web add react", "react"},
+		{"pnpm dir add", "pnpm --dir apps/web add zod", "zod"},
+		{"pnpm -C add", "pnpm -C apps/web add zod", "zod"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+			if len(result.PreActionFlags) == 0 {
+				t.Errorf("Parse(%q).PreActionFlags should not be empty", tt.command)
+			}
+		})
+	}
+}
+
+func TestParse_ShellOperators(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		pkgName  string
+		pkgCount int
+	}{
+		{"chained &&", "npm install axios && npm install lodash", "axios", 1},
+		{"chained semicolon", "npm install axios; npm install lodash", "axios", 1},
+		{"piped", "npm install axios | tee log.txt", "axios", 1},
+		{"or chain", "npm install axios || echo failed", "axios", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if len(result.Packages) != tt.pkgCount {
+				t.Errorf("Parse(%q) found %d packages, want %d", tt.command, len(result.Packages), tt.pkgCount)
+			}
+			if result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %q, want %q", tt.command, result.Packages[0].Name, tt.pkgName)
+			}
+		})
+	}
+}
+
+func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
+	// Ensure shell operators are NOT treated as package names
+	result := Parse("npm install axios && npm install lodash")
+	if result == nil {
+		t.Fatal("expected parsed result")
+	}
+	for _, pkg := range result.Packages {
+		if pkg.Name == "&&" || pkg.Name == "npm" || pkg.Name == "install" || pkg.Name == "lodash" {
+			t.Errorf("shell operator or second command token %q should not be a package name", pkg.Name)
+		}
+	}
+}
+
+func TestParseAll_CapturesNestedShellSegments(t *testing.T) {
+	results := ParseAll("bash -c 'npm install safe-pkg && pnpm add evil-pkg'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("second parsed command = %#v, want pnpm add evil-pkg", results[1])
+	}
+}
+
+func TestParseAll_CapturesWrappedLaterShellSegments(t *testing.T) {
+	results := ParseAll("bash -c 'echo hi && env npm install lodash && sudo pnpm add react'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "lodash" {
+		t.Fatalf("first parsed command = %#v, want env npm install lodash", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want sudo pnpm add react", results[1])
+	}
+}
+
+func TestParseAll_CapturesBackgroundedSegments(t *testing.T) {
+	results := ParseAll("echo hi & npm install lodash && bash -c 'echo done & pnpm add react'")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "lodash" {
+		t.Fatalf("first parsed command = %#v, want npm install lodash", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want pnpm add react", results[1])
+	}
+}
+
+func TestParse_CommandPrefixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+	}{
+		{"sudo npm install", "sudo npm install axios", "axios"},
+		{"sudo -E npm install", "sudo -E npm install axios", "axios"},
+		{"sudo -u root npm install", "sudo -u root npm install axios", "axios"},
+		{"env npm install", "env npm install axios", "axios"},
+		{"env VAR=val npm install", "env NODE_ENV=production npm install axios", "axios"},
+		{"inline env var", "NODE_ENV=production npm install axios", "axios"},
+		{"multiple env vars", "NODE_ENV=production CI=true npm install axios", "axios"},
+		{"env split string npm install", "env -S 'npm install axios'", "axios"},
+		{"env split string with assignment", "env -S 'NODE_ENV=production npm install axios'", "axios"},
+		{"sudo pnpm add", "sudo pnpm add react", "react"},
+		{"env pnpm add", "env pnpm add react", "react"},
+		{"path-qualified sudo", "/usr/bin/sudo npm install axios", "axios"},
+		{"stacked sudo", "sudo sudo npm install axios", "axios"},
+		{"env then sudo", "env NODE_ENV=prod sudo npm install axios", "axios"},
+		{"empty env var value", "VAR= npm install axios", "axios"},
+		{"path-qualified env", "/usr/bin/env npm install axios", "axios"},
+		{"command npm install", "command npm install axios", "axios"},
+		{"time npm install", "time npm install axios", "axios"},
+		{"nice npm install", "nice -n 10 npm install axios", "axios"},
+		{"npx npm install", "npx npm install axios", "axios"},
+		{"npx --yes npm install", "npx --yes npm install axios", "axios"},
+		{"command -v skipped flags", "command npm install axios", "axios"},
+		{"bash -c npm install", "bash -c 'npm install axios'", "axios"},
+		{"sh -c npm install", "sh -c 'npm install axios'", "axios"},
+		{"zsh -c npm install", "zsh -lc 'npm install axios'", "axios"},
+		{"bash -c pnpm add", "bash -c 'pnpm add react'", "react"},
+		{"sh -c with double quotes", `sh -c "npm install lodash"`, "lodash"},
+		{"sudo bash -c", "sudo bash -c 'npm install axios'", "axios"},
+		{"bash -c with chained cmds", "bash -c 'npm install axios && npm install lodash'", "axios"},
+		{"sh -c with semicolon chain", "sh -c 'npm install axios; echo done'", "axios"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+		})
+	}
+}
+
+func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
+	// These should not be treated as install commands
+	nonInstalls := []string{
+		"sudo ls -la",
+		"env echo hello",
+		"FOO=bar echo test",
+		"env -S 'echo hello'",
+		"npx create-react-app my-app",
+		"command -v npm",
+		"time echo hello",
+		"bash script.sh npm install axios",
+		`echo "npm install axios"`,
+		"bash -c 'echo hello'",
+		"bash -c 'echo hello' npm install axios",
+	}
+	for _, cmd := range nonInstalls {
+		if result := Parse(cmd); result != nil {
+			t.Errorf("Parse(%q) should return nil", cmd)
+		}
+	}
+}
+
+func TestLooksLikeInstall(t *testing.T) {
+	suspicious := []string{
+		"some-wrapper npm install axios",
+		"/opt/bin/mystery npm install lodash",
+		"strace npm install axios",
+		"nohup npm install axios",
+		"watch pnpm add react",
+		"strace bash -c 'npm install axios'",
+		"ltrace sh -c 'pnpm add react'",
+		"nohup bash -lc 'npm install lodash'",
+		"env -S 'npm install axios'",
+	}
+	for _, cmd := range suspicious {
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	safe := []string{
+		"git status",
+		"npm run test",
+		"npm test",
+		"echo install npm",
+		"ls -la",
+		"pnpm run build",
+		`echo "npm install axios"`,
+		`env -S "echo hello"`,
+		`bash -c "echo hello"`,
+		"bash script.sh npm install axios",
+		"echo npm install axios",
+		"cat npm install axios",
+		"printf npm install axios",
+		"grep npm install package.json",
+		"python -c 'npm install'",
+		"node -e 'npm install'",
+		"bash -c 'echo hello' npm install axios",
+		"sh -c 'ls' npm install lodash",
+	}
+	for _, cmd := range safe {
+		if LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = true, want false", cmd)
+		}
+	}
+}
+
 func TestIsInstallCommand(t *testing.T) {
 	installCmds := []string{
 		"npm install axios",
 		"npm i lodash",
 		"pnpm add express",
+		"pnpm --filter web add react",
+		"npm --prefix ./app install axios",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {

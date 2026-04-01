@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 const (
@@ -56,7 +56,7 @@ func (p *Provider) IsAvailable(ctx context.Context) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode < 500
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 // GetPackageScore fetches score data for a specific package version from Socket.

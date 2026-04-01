@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // MockProvider is a test provider with configurable responses.

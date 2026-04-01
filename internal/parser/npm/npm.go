@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/internal/parser/spec"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 var installAliases = map[string]bool{
@@ -14,11 +15,23 @@ var installAliases = map[string]bool{
 	"add":     true,
 }
 
-// npmFlags that take a following argument value
+// npmFlags that take a following argument value (post-action)
 var flagsWithValue = map[string]bool{
 	"--save-prefix": true,
 	"--tag":         true,
 	"--registry":    true,
+}
+
+// globalFlagsWithValue are npm flags that appear before the action verb and take a value.
+// Note: --registry intentionally appears here and in flagsWithValue since it's valid in both positions.
+var globalFlagsWithValue = map[string]bool{
+	"--prefix":     true,
+	"--registry":   true,
+	"--userconfig": true,
+	"--cache":      true,
+	"--loglevel":   true,
+	"--workspace":  true,
+	"-w":           true,
 }
 
 // Parse attempts to parse tokens as an npm install command.
@@ -30,16 +43,33 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	// Check if first token is npm (could be a path like /usr/local/bin/npm)
 	base := filepath.Base(tokens[0])
-	if base != "npm" && base != "npx" {
+	if base != "npm" {
 		return nil
 	}
 
-	// npx is not an install command we guard
-	if base == "npx" {
+	// Skip pre-action flags to find the action verb
+	var preActionFlags []string
+	actionIdx := -1
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		if strings.HasPrefix(tok, "-") {
+			preActionFlags = append(preActionFlags, tok)
+			if globalFlagsWithValue[tok] && i+1 < len(tokens) {
+				i++
+				preActionFlags = append(preActionFlags, tokens[i])
+			}
+			continue
+		}
+		// First non-flag token is the action verb
+		actionIdx = i
+		break
+	}
+
+	if actionIdx == -1 {
 		return nil
 	}
 
-	action := tokens[1]
+	action := tokens[actionIdx]
 	if !installAliases[action] {
 		return nil
 	}
@@ -47,12 +77,13 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	cmd := &api.ParsedCommand{
 		PackageManager: "npm",
 		Action:         action,
+		PreActionFlags: preActionFlags,
 		IsInstall:      true,
 		RawCommand:     rawCommand,
 	}
 
-	// Parse remaining tokens
-	i := 2
+	// Parse remaining tokens (after action verb)
+	i := actionIdx + 1
 	for i < len(tokens) {
 		tok := tokens[i]
 
@@ -68,7 +99,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		}
 
 		// Package spec
-		pkg := parsePackageSpec(tok)
+		pkg := spec.ParsePackageSpec(tok)
 		pkg.Ecosystem = api.EcosystemNPM
 		cmd.Packages = append(cmd.Packages, pkg)
 		i++
@@ -80,60 +111,4 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	}
 
 	return cmd
-}
-
-// parsePackageSpec parses a package spec like "axios", "axios@1.7.0", "@scope/pkg@^2.0.0"
-func parsePackageSpec(spec string) api.PackageRequest {
-	req := api.PackageRequest{
-		RawSpec: spec,
-	}
-
-	name, version := splitSpec(spec)
-	req.Name = name
-	req.Version = version
-	req.Pinned = isExactVersion(version)
-
-	return req
-}
-
-// splitSpec splits "name@version" into name and version.
-// Handles scoped packages like "@scope/name@version".
-func splitSpec(spec string) (string, string) {
-	// Handle scoped packages
-	if strings.HasPrefix(spec, "@") {
-		// Find the second @ if it exists
-		rest := spec[1:]
-		idx := strings.Index(rest, "@")
-		if idx == -1 {
-			return spec, ""
-		}
-		return spec[:idx+1], rest[idx+1:]
-	}
-
-	idx := strings.Index(spec, "@")
-	if idx == -1 {
-		return spec, ""
-	}
-	return spec[:idx], spec[idx+1:]
-}
-
-// isExactVersion returns true if the version string is an exact version (no range operators).
-func isExactVersion(version string) bool {
-	if version == "" || version == "latest" || version == "*" {
-		return false
-	}
-
-	// Contains range operators
-	for _, prefix := range []string{"^", "~", ">=", "<=", ">", "<"} {
-		if strings.HasPrefix(version, prefix) {
-			return false
-		}
-	}
-
-	// Contains spaces or || (range expression)
-	if strings.Contains(version, " ") || strings.Contains(version, "||") {
-		return false
-	}
-
-	return true
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // Command rewrites a parsed command with selected versions.
@@ -13,15 +13,16 @@ import (
 func Command(cmd *api.ParsedCommand, selectedVersions map[string]string) string {
 	var parts []string
 
-	switch cmd.PackageManager {
-	case "npm":
-		parts = append(parts, "npm", cmd.Action)
-	case "pnpm":
-		parts = append(parts, "pnpm", cmd.Action)
-	default:
-		parts = append(parts, cmd.PackageManager, cmd.Action)
-	}
+	// Package manager
+	parts = append(parts, cmd.PackageManager)
 
+	// Pre-action flags (must come before the action verb)
+	parts = append(parts, cmd.PreActionFlags...)
+
+	// Action verb
+	parts = append(parts, cmd.Action)
+
+	// Packages
 	for _, pkg := range cmd.Packages {
 		if v, ok := selectedVersions[pkg.Name]; ok && v != "" {
 			parts = append(parts, fmt.Sprintf("%s@%s", pkg.Name, v))
@@ -30,6 +31,7 @@ func Command(cmd *api.ParsedCommand, selectedVersions map[string]string) string 
 		}
 	}
 
+	// Post-action flags
 	parts = append(parts, cmd.Flags...)
 
 	return strings.Join(parts, " ")

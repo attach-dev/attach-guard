@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/hammadtq/attach-dev/attach-guard/pkg/api"
+	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 // ReadHookInput reads and parses Claude hook JSON from a reader.
@@ -25,28 +25,35 @@ func ReadHookInput(r io.Reader) (*api.HookInput, error) {
 }
 
 // FormatHookOutput converts an evaluation result to Claude hook output JSON.
+// Uses the hookSpecificOutput contract for PreToolUse events.
 func FormatHookOutput(result *api.EvaluationResult) ([]byte, error) {
-	output := api.HookOutput{}
+	specific := &api.HookSpecificOutput{
+		HookEventName: "PreToolUse",
+	}
 
 	switch result.Decision {
 	case api.Allow:
-		output.Decision = "allow"
+		specific.PermissionDecision = "allow"
 		if result.RewrittenCommand != "" {
-			output.UpdatedInput = &struct {
-				Command string `json:"command"`
-			}{Command: result.RewrittenCommand}
+			specific.UpdatedInput = map[string]string{
+				"command": result.RewrittenCommand,
+			}
 		}
 	case api.Ask:
-		output.Decision = "ask"
-		output.Reason = result.Reason
+		specific.PermissionDecision = "ask"
+		specific.PermissionDecisionReason = result.Reason
 		if result.RewrittenCommand != "" {
-			output.UpdatedInput = &struct {
-				Command string `json:"command"`
-			}{Command: result.RewrittenCommand}
+			specific.UpdatedInput = map[string]string{
+				"command": result.RewrittenCommand,
+			}
 		}
 	case api.Deny:
-		output.Decision = "deny"
-		output.Reason = result.Reason
+		specific.PermissionDecision = "deny"
+		specific.PermissionDecisionReason = result.Reason
+	}
+
+	output := api.HookOutput{
+		HookSpecificOutput: specific,
 	}
 
 	return json.Marshal(output)

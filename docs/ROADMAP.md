@@ -9,12 +9,28 @@
 - [x] Minimum package age enforcement
 - [x] Version selection and command rewrite
 - [x] Claude Code PreToolUse hook
-- [x] Shell shims for npm and pnpm
 - [x] JSONL audit logging
 - [x] Config loading with env var overrides
-- [x] CLI: evaluate, hook, install, doctor, config, explain, version
-- [x] Unit and e2e tests
+- [x] CLI: evaluate, hook, config init, version
+- [x] Unit tests
 - [x] Documentation
+
+### Parser hardening follow-ups
+
+- [x] Tokenizer: split shell operators embedded without spaces (e.g., `ls&&npm install evil`)
+- [x] Scan all command segments, not just the first (`ParseAll`)
+- [ ] Tokenizer: handle redirections (`>`, `<`, `>>`) as operators to avoid phantom package names
+- [ ] Tokenizer: handle `$(...)` command substitution
+- [ ] `sudo` flag-with-value consumption for `--group`, `--host`, `--role`, `--type`, etc.
+- [ ] Deduplicate packages across chained command segments
+- [ ] Claude Code plugin packaging (hook + optional skill)
+
+### Not yet implemented
+
+- [ ] Shell shims for npm and pnpm
+- [ ] `install` command (auto-setup shims and config)
+- [ ] `doctor` command (environment check)
+- [ ] `explain` command (package detail lookup)
 
 ## Phase 2: Ecosystem Expansion
 
