@@ -169,15 +169,14 @@ func looksLikeInstallTokens(tokens []string) bool {
 				// bash script.sh ... — stop, these are script arguments
 				return false
 			}
-			// -c was found — re-tokenize the command string and check inside it
+			// -c was found — re-tokenize the command string and check inside it.
+			// Any tokens after the command string are positional args ($0, $1),
+			// not commands, so stop scanning regardless of the result.
 			if i < len(tokens) {
 				inner := Tokenize(tokens[i])
-				if looksLikeInstallTokens(inner) {
-					return true
-				}
-				i++ // skip past the -c argument
+				return looksLikeInstallTokens(inner)
 			}
-			continue
+			return false
 		}
 
 		// Known wrapper — skip it and its flags
@@ -299,14 +298,10 @@ func unwrapPrefixes(tokens []string) []string {
 				// and truncate at shell operators so chained commands inside
 				// the -c string (e.g., "npm install axios && rm -rf /")
 				// don't leak into the parser.
+				// Any tokens after the command string are positional args
+				// ($0, $1, ...) for the shell, NOT commands — discard them.
 				inner := Tokenize(tokens[0])
 				inner = firstCommandSegment(inner)
-				// Append any remaining tokens (rare but possible)
-				if len(tokens) > 1 {
-					remaining := tokens[1:]
-					remaining = firstCommandSegment(remaining)
-					inner = append(inner, remaining...)
-				}
 				tokens = inner
 				continue
 			}
