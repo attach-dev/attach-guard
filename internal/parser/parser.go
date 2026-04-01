@@ -160,7 +160,7 @@ func looksLikeInstallTokens(tokens []string) bool {
 					hasC = true
 				}
 				if !strings.HasPrefix(tokens[i], "--") && len(tokens[i]) > 2 &&
-					tokens[i][len(tokens[i])-1] == 'c' {
+					strings.ContainsRune(tokens[i][1:], 'c') {
 					hasC = true
 				}
 				i++
@@ -182,6 +182,10 @@ func looksLikeInstallTokens(tokens []string) bool {
 		// Known wrapper — skip it and its flags
 		if transparentWrappers[base] {
 			i++
+			// "command -v/-V" is introspection, not execution — stop scanning
+			if base == "command" && i < len(tokens) && (tokens[i] == "-v" || tokens[i] == "-V") {
+				return false
+			}
 			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
 				i++
 			}
@@ -277,9 +281,9 @@ func unwrapPrefixes(tokens []string) []string {
 					foundC = true
 					break
 				}
-				// Combined short flags like -lc, -xc — check if 'c' is the last char
+				// Combined short flags like -lc, -cl, -xce — check if 'c' appears anywhere
 				if strings.HasPrefix(flag, "-") && !strings.HasPrefix(flag, "--") &&
-					len(flag) > 2 && flag[len(flag)-1] == 'c' {
+					len(flag) > 2 && strings.ContainsRune(flag[1:], 'c') {
 					foundC = true
 					break
 				}
@@ -312,7 +316,12 @@ func unwrapPrefixes(tokens []string) []string {
 		// command, time, nice, npx — skip the wrapper and any leading flags
 		if base == "command" || base == "time" || base == "nice" || base == "npx" {
 			tokens = tokens[1:]
-			// Skip flags (e.g., "nice -n 10", "command -v", "npx --yes")
+			// "command -v" is introspection (like `which`), not execution.
+			// Return empty to prevent the remaining tokens from being parsed.
+			if base == "command" && len(tokens) > 0 && (tokens[0] == "-v" || tokens[0] == "-V") {
+				return nil
+			}
+			// Skip flags (e.g., "nice -n 10", "npx --yes")
 			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
 				flag := tokens[0]
 				tokens = tokens[1:]

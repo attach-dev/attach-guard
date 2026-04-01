@@ -67,6 +67,10 @@ Commands:
 }
 
 // cmdEvaluate evaluates a command string passed as arguments.
+// Note: the shell strips quoting before Go sees os.Args, so commands with
+// shell-significant characters (&&, ||, quotes) should be passed as a single
+// quoted argument: attach-guard evaluate "bash -c 'npm install axios'"
+// For accurate parsing of complex commands, use the hook path instead.
 func cmdEvaluate() {
 	if len(os.Args) < 3 {
 		fmt.Fprintln(os.Stderr, "usage: attach-guard evaluate <command>")

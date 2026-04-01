@@ -27,9 +27,11 @@ var flagsWithValue = map[string]bool{
 var globalFlagsWithValue = map[string]bool{
 	"--prefix":     true,
 	"--registry":   true,
-	"--userconfig":  true,
+	"--userconfig": true,
 	"--cache":      true,
 	"--loglevel":   true,
+	"--workspace":  true,
+	"-w":           true,
 }
 
 // Parse attempts to parse tokens as an npm install command.
