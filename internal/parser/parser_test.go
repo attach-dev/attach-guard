@@ -16,6 +16,16 @@ func TestTokenize(t *testing.T) {
 		{"npm install --save-dev jest", []string{"npm", "install", "--save-dev", "jest"}},
 		{"", nil},
 		{"npm install @scope/pkg@^2.0.0", []string{"npm", "install", "@scope/pkg@^2.0.0"}},
+		// Shell operators without spaces
+		{"ls&&npm install axios", []string{"ls", "&&", "npm", "install", "axios"}},
+		{"ls||npm install axios", []string{"ls", "||", "npm", "install", "axios"}},
+		{"ls;npm install axios", []string{"ls", ";", "npm", "install", "axios"}},
+		{"ls|npm install axios", []string{"ls", "|", "npm", "install", "axios"}},
+		// Newlines as command separators
+		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
+		// Operators inside quotes should NOT be split
+		{`echo "a&&b"`, []string{"echo", "a&&b"}},
+		{`echo 'a;b'`, []string{"echo", "a;b"}},
 	}
 
 	for _, tt := range tests {

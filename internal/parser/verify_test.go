@@ -91,7 +91,38 @@ func TestVerifyReviewFindings(t *testing.T) {
 		}
 	}
 
-	// Finding 5: env -S split-string should unwrap and be guarded.
+	// Finding 6: no-space shell operators must still be caught
+	noSpaceOpCmds := []string{
+		"ls&&npm install evil-pkg",
+		"ls;npm install evil-pkg",
+		"ls||npm install evil-pkg",
+		"ls|npm install evil-pkg",
+		"echo done;pnpm add evil-pkg",
+	}
+	for _, cmd := range noSpaceOpCmds {
+		if Parse(cmd) == nil {
+			t.Errorf("Parse(%q) = nil, want install command", cmd)
+		}
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	// Finding 7: newlines as command separators
+	newlineCmds := []string{
+		"echo hello\nnpm install evil-pkg",
+		"ls\npnpm add evil-pkg",
+	}
+	for _, cmd := range newlineCmds {
+		if Parse(cmd) == nil {
+			t.Errorf("Parse(%q) = nil, want install command", cmd)
+		}
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
+
+	// Finding 8: env -S split-string should unwrap and be guarded.
 	envSplitStringCmds := []string{
 		"env -S 'npm install axios'",
 		"env -S 'NODE_ENV=production npm install axios'",
