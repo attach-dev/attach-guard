@@ -44,6 +44,33 @@ func TestWriteAndLoad(t *testing.T) {
 	}
 }
 
+func TestPluginConfigDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write a plugin config with a custom score threshold
+	pluginCfg := []byte("policy:\n  min_supply_chain_score: 42\n")
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), pluginCfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ATTACH_GUARD_PLUGIN_CONFIG", dir)
+	// Point HOME to an empty dir so user-global config doesn't interfere
+	t.Setenv("HOME", t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Policy.MinSupplyChainScore != 42 {
+		t.Errorf("expected plugin config min_supply_chain_score=42, got %f", cfg.Policy.MinSupplyChainScore)
+	}
+	// Other defaults should be preserved
+	if cfg.Provider.Kind != "socket" {
+		t.Errorf("expected provider=socket, got %s", cfg.Provider.Kind)
+	}
+}
+
 func TestEnvOverrides(t *testing.T) {
 	os.Setenv("ATTACH_GUARD_LOG_PATH", "/tmp/test-audit.jsonl")
 	defer os.Unsetenv("ATTACH_GUARD_LOG_PATH")

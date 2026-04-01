@@ -1,0 +1,13 @@
+{
+  "name": "attach-guard",
+  "version": "0.1.0",
+  "description": "Supply-chain security guard that intercepts npm/pnpm install commands and enforces package risk policies before execution.",
+  "author": {
+    "name": "Attach.dev"
+  },
+  "repository": "https://github.com/attach-dev/attach-guard",
+  "license": "MIT",
+  "keywords": ["security", "supply-chain", "npm", "pnpm", "hooks"],
+  "hooks": "./hooks/hooks.json",
+  "skills": "./skills/"
+}

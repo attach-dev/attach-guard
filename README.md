@@ -58,12 +58,28 @@ A security guardrail must be a hook because enforcement requires interception at
 
 ## Installation
 
-### Prerequisites
+### Option A: Claude Code Plugin (recommended)
+
+The easiest way to install attach-guard is as a Claude Code plugin:
+
+```bash
+claude plugin install attach-dev/attach-guard --path plugin
+```
+
+This automatically registers the hook — no manual settings.json editing needed. Then set your API token:
+
+```bash
+export SOCKET_API_TOKEN="your-token-here"
+```
+
+### Option B: Manual Installation
+
+#### Prerequisites
 
 - [Go 1.21+](https://go.dev/dl/) (to build from source)
 - A [Socket.dev](https://socket.dev) API token (free tier available)
 
-### Step 1: Build and install the binary
+#### Step 1: Build and install the binary
 
 ```bash
 go build -o attach-guard ./cmd/attach-guard
@@ -215,7 +231,8 @@ logging:
 1. Environment variables
 2. Project-local config (`.attach-guard/config.yaml`)
 3. User-global config (`~/.attach-guard/config.yaml`)
-4. Built-in defaults
+4. Plugin-bundled config (when installed as a plugin)
+5. Built-in defaults
 
 ## Policy Model
 
@@ -278,10 +295,16 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 
 ```bash
 # Run all tests
-go test ./...
+make test
 
 # Build
-go build -o attach-guard ./cmd/attach-guard
+make build
+
+# Build plugin binaries (cross-compile for all platforms)
+make plugin-build
+
+# Test plugin locally
+claude --plugin-dir ./plugin
 
 # Evaluate a command
 ./attach-guard evaluate npm install lodash

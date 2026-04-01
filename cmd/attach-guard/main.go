@@ -16,6 +16,9 @@ import (
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 // exitCodeHookBlock is the exit code that tells Claude Code to block the tool
 // call. Claude Code treats exit code 2 as a blocking hook error; any other
 // non-zero exit is non-blocking (fail-open). We use this in hook mode so that
@@ -45,7 +48,7 @@ func main() {
 	case "config":
 		cmdConfig()
 	case "version":
-		fmt.Println("attach-guard v0.1.0")
+		fmt.Printf("attach-guard v%s\n", version)
 	case "help", "--help", "-h":
 		printUsage()
 	default:
