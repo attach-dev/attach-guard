@@ -13,6 +13,8 @@ policy:
   auto_rewrite_unpinned:
     local: false
     ci: false
+  allowlist: []
+  denylist: []
 package_managers:
   npm: true
   pnpm: true
