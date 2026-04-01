@@ -17,7 +17,12 @@
 
 ### Parser hardening follow-ups
 
-- [ ] Tokenizer: split shell operators embedded without spaces (e.g., `axios&&lodash`) so `firstCommandSegment()` can see them
+- [x] Tokenizer: split shell operators embedded without spaces (e.g., `ls&&npm install evil`)
+- [x] Scan all command segments, not just the first (`ParseAll`)
+- [ ] Tokenizer: handle redirections (`>`, `<`, `>>`) as operators to avoid phantom package names
+- [ ] Tokenizer: handle `$(...)` command substitution
+- [ ] `sudo` flag-with-value consumption for `--group`, `--host`, `--role`, `--type`, etc.
+- [ ] Deduplicate packages across chained command segments
 - [ ] Claude Code plugin packaging (hook + optional skill)
 
 ### Not yet implemented
