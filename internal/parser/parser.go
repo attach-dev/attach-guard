@@ -520,21 +520,3 @@ func commandSegments(tokens []string) [][]string {
 	return segments
 }
 
-// firstCommandSegment returns tokens up to the first shell operator.
-// Also handles cases where a semicolon is attached to a token (e.g., "axios;").
-func firstCommandSegment(tokens []string) []string {
-	for i, tok := range tokens {
-		if shellOperators[tok] {
-			return tokens[:i]
-		}
-		// Handle trailing semicolons (e.g., "axios;" from "npm install axios; ...")
-		if strings.HasSuffix(tok, ";") {
-			trimmed := strings.TrimSuffix(tok, ";")
-			result := make([]string, i+1)
-			copy(result, tokens[:i])
-			result[i] = trimmed
-			return result
-		}
-	}
-	return tokens
-}
