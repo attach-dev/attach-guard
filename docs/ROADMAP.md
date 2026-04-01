@@ -15,6 +15,11 @@
 - [x] Unit tests
 - [x] Documentation
 
+### Parser hardening follow-ups
+
+- [ ] Tokenizer: split shell operators embedded without spaces (e.g., `axios&&lodash`) so `firstCommandSegment()` can see them
+- [ ] Claude Code plugin packaging (hook + optional skill)
+
 ### Not yet implemented
 
 - [ ] Shell shims for npm and pnpm
