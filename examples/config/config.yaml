@@ -1,4 +1,3 @@
-mode: ask
 provider:
   kind: socket
   api_token_env: SOCKET_API_TOKEN

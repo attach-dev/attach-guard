@@ -26,7 +26,16 @@ func main() {
 	case "evaluate":
 		cmdEvaluate()
 	case "hook":
-		cmdHook()
+		// "hook" with no subcommand reads hook JSON from stdin
+		// "hook run" also reads from stdin (alias)
+		if len(os.Args) >= 3 && os.Args[2] == "run" {
+			cmdHook()
+		} else if len(os.Args) == 2 {
+			cmdHook()
+		} else {
+			fmt.Fprintf(os.Stderr, "unknown hook subcommand: %s\nusage: attach-guard hook [run]\n", os.Args[2])
+			os.Exit(1)
+		}
 	case "config":
 		cmdConfig()
 	case "version":
@@ -45,7 +54,7 @@ func printUsage() {
 
 Commands:
   evaluate <command>   Evaluate a package manager command against policy
-  hook                 Read Claude Code hook JSON from stdin and respond
+  hook [run]           Read Claude Code hook JSON from stdin and respond
   config init          Write default config to ~/.attach-guard/config.yaml
   version              Print version
   help                 Show this help`)

@@ -17,6 +17,7 @@ type Result struct {
 	WasRewritten bool
 	AllFailed    bool
 	Decision     api.Decision // the policy decision for the selected version
+	Reason       string       // the policy reason for the selected version
 }
 
 // Selector picks the best acceptable version for an unpinned package.
@@ -52,7 +53,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 			Pinned:            true,
 		}
 		decision := s.engine.Evaluate(input)
-		return &Result{Selected: info, WasRewritten: false, Decision: decision.Decision}, nil
+		return &Result{Selected: info, WasRewritten: false, Decision: decision.Decision, Reason: decision.Reason}, nil
 	}
 
 	// Unpinned: fetch candidate versions
@@ -93,6 +94,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 				Selected:     &versions[i],
 				WasRewritten: i > 0,
 				Decision:     api.Allow,
+				Reason:       decision.Reason,
 			}, nil
 		}
 		if decision.Decision == api.Ask && bestAsk == nil {
@@ -100,6 +102,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 				Selected:     &versions[i],
 				WasRewritten: i > 0,
 				Decision:     api.Ask,
+				Reason:       decision.Reason,
 			}
 		}
 	}

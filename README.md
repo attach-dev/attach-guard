@@ -15,13 +15,13 @@ attach-guard intercepts package installation commands and evaluates them against
 - Denies known malware and low-score packages
 - Asks for confirmation on gray-band packages
 - Rewrites unpinned installs to safe pinned versions when possible
-- Works inside Claude Code (via PreToolUse hooks) and in your normal shell (via shims)
+- Works inside Claude Code (via PreToolUse hooks)
 - Fails closed in CI when the provider is unavailable
 - Logs every decision to a local JSONL audit trail
 
 ## Why Hard Enforcement, Not Advisory MCP
 
-Socket MCP and similar tools provide package intelligence as advisory context. attach-guard uses that intelligence as input but enforces decisions at the command execution boundary. The hook/shim blocks the install before the package manager runs. This is the difference between "here's some context about this package" and "this install is denied."
+Socket MCP and similar tools provide package intelligence as advisory context. attach-guard uses that intelligence as input but enforces decisions at the command execution boundary. The hook blocks the install before the package manager runs. This is the difference between "here's some context about this package" and "this install is denied."
 
 ## Quickstart
 
@@ -31,11 +31,10 @@ Socket MCP and similar tools provide package intelligence as advisory context. a
 go build -o attach-guard ./cmd/attach-guard
 ```
 
-### Install
+### Initialize config
 
 ```bash
-# Creates config, shims, and hook scripts
-./attach-guard install
+./attach-guard config init
 ```
 
 ### Set up your Socket API token
@@ -44,23 +43,7 @@ go build -o attach-guard ./cmd/attach-guard
 export SOCKET_API_TOKEN="your-token-here"
 ```
 
-### Verify
-
-```bash
-./attach-guard doctor
-```
-
 ## Claude Code Setup
-
-### Option 1: Auto-install hook
-
-```bash
-attach-guard hook install
-```
-
-This prints the Claude Code settings snippet and writes a hook script.
-
-### Option 2: Manual
 
 Add to `.claude/settings.json` or `.claude/settings.local.json`:
 
@@ -73,7 +56,7 @@ Add to `.claude/settings.json` or `.claude/settings.local.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "attach-guard hook run"
+            "command": "attach-guard hook"
           }
         ]
       }
@@ -82,31 +65,26 @@ Add to `.claude/settings.json` or `.claude/settings.local.json`:
 }
 ```
 
-When Claude attempts `npm install axios`, attach-guard intercepts and returns allow, ask (with rewritten command), or deny.
-
-## Shell Setup
-
-After `attach-guard install`, add the shim directory to your PATH:
-
-```bash
-export PATH="$HOME/.attach-guard/bin:$PATH"
-```
-
-Add this to your shell profile (`.bashrc`, `.zshrc`, etc.) to persist.
-
-Now `npm install` and `pnpm add` commands are automatically guarded.
+When Claude attempts `npm install axios`, attach-guard intercepts and returns allow, ask (with rewritten command), or deny via the `hookSpecificOutput` contract.
 
 ## CLI Commands
 
 ```
-attach-guard evaluate --command "npm install axios" --mode shell --json
-attach-guard hook install          # Set up Claude Code hooks
-attach-guard hook run              # Run by hooks (reads stdin)
-attach-guard install               # Install shims and config
-attach-guard doctor                # Check environment
-attach-guard config init           # Write default config
-attach-guard explain npm axios 1.7.0  # Explain a package
-attach-guard version
+attach-guard evaluate <command>    Evaluate a package manager command against policy
+attach-guard hook [run]            Read Claude Code hook JSON from stdin and respond
+attach-guard config init           Write default config to ~/.attach-guard/config.yaml
+attach-guard version               Print version
+attach-guard help                  Show help
+```
+
+### Examples
+
+```bash
+# Evaluate a command directly
+attach-guard evaluate npm install axios
+
+# Use as a Claude Code hook (reads JSON from stdin)
+attach-guard hook
 ```
 
 ## Configuration
@@ -114,7 +92,6 @@ attach-guard version
 Default config location: `~/.attach-guard/config.yaml`
 
 ```yaml
-mode: ask                          # ask | enforce
 provider:
   kind: socket                     # risk intelligence provider
   api_token_env: SOCKET_API_TOKEN
@@ -141,17 +118,15 @@ logging:
 
 ### Environment variable overrides
 
-- `ATTACH_GUARD_MODE` — override mode
 - `ATTACH_GUARD_LOG_PATH` — override log path
 - `ATTACH_GUARD_PROVIDER` — override provider kind
 
 ### Config precedence
 
-1. CLI flags
-2. Environment variables
-3. Project-local config (`.attach-guard/config.yaml`)
-4. User-global config (`~/.attach-guard/config.yaml`)
-5. Built-in defaults
+1. Environment variables
+2. Project-local config (`.attach-guard/config.yaml`)
+3. User-global config (`~/.attach-guard/config.yaml`)
+4. Built-in defaults
 
 ## Policy Model
 
@@ -172,12 +147,12 @@ When you run `npm install axios` (no version pin):
 - attach-guard fetches candidate versions
 - If the latest passes policy, the command runs as-is
 - If the latest fails but an older version passes, attach-guard suggests a rewrite: `npm install axios@1.6.8`
-- In Claude Code mode: returns `ask` with the rewritten command
+- In Claude Code mode: returns `ask` with the rewritten command via `updatedInput`
 - If no version passes, denies
 
 ### Failure handling
 
-- Local interactive mode: asks on provider failure
+- Local/interactive mode: asks on provider failure
 - CI mode: denies on provider failure (fail closed)
 
 ## Audit Log
@@ -195,7 +170,7 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
   "reason": "package passes all policy checks",
   "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.7.0","score":{"supply_chain":92,"overall":88}}],
   "provider": "socket",
-  "mode": "shell"
+  "mode": "claude"
 }
 ```
 
@@ -218,8 +193,8 @@ go test ./...
 # Build
 go build -o attach-guard ./cmd/attach-guard
 
-# Run
-./attach-guard evaluate --command "npm install lodash" --json
+# Evaluate a command
+./attach-guard evaluate npm install lodash
 ```
 
 ## License

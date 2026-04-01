@@ -116,7 +116,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			// Use the selector's policy decision for the pinned version
 			overallDecision = worseDecision(overallDecision, result.Decision)
 			if result.Decision != api.Allow {
-				reasons = append(reasons, fmt.Sprintf("%s@%s: does not pass policy", pkg.Name, pkg.Version))
+				reasons = append(reasons, fmt.Sprintf("%s@%s: %s", pkg.Name, pkg.Version, result.Reason))
 			}
 		} else {
 			// Unpinned — use version selection result

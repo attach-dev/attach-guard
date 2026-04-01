@@ -222,6 +222,51 @@ func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
 	}
 }
 
+func TestParse_CommandPrefixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		pkgName string
+	}{
+		{"sudo npm install", "sudo npm install axios", "axios"},
+		{"sudo -E npm install", "sudo -E npm install axios", "axios"},
+		{"sudo -u root npm install", "sudo -u root npm install axios", "axios"},
+		{"env npm install", "env npm install axios", "axios"},
+		{"env VAR=val npm install", "env NODE_ENV=production npm install axios", "axios"},
+		{"inline env var", "NODE_ENV=production npm install axios", "axios"},
+		{"multiple env vars", "NODE_ENV=production CI=true npm install axios", "axios"},
+		{"sudo pnpm add", "sudo pnpm add react", "react"},
+		{"env pnpm add", "env pnpm add react", "react"},
+		{"path-qualified sudo", "/usr/bin/sudo npm install axios", "axios"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, expected install command", tt.command)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.pkgName {
+				t.Errorf("Parse(%q).Packages[0].Name = %v, want %q", tt.command, result.Packages, tt.pkgName)
+			}
+		})
+	}
+}
+
+func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
+	// These should not be treated as install commands
+	nonInstalls := []string{
+		"sudo ls -la",
+		"env echo hello",
+		"FOO=bar echo test",
+	}
+	for _, cmd := range nonInstalls {
+		if result := Parse(cmd); result != nil {
+			t.Errorf("Parse(%q) should return nil", cmd)
+		}
+	}
+}
+
 func TestIsInstallCommand(t *testing.T) {
 	installCmds := []string{
 		"npm install axios",

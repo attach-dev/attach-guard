@@ -109,10 +109,15 @@ type HookInput struct {
 }
 
 // HookOutput is the JSON structure returned to Claude Code from hooks.
+// Uses the hookSpecificOutput contract for PreToolUse events.
 type HookOutput struct {
-	Decision     string `json:"decision"`               // allow, ask, deny
-	Reason       string `json:"reason,omitempty"`
-	UpdatedInput *struct {
-		Command string `json:"command"`
-	} `json:"updatedInput,omitempty"`
+	HookSpecificOutput *HookSpecificOutput `json:"hookSpecificOutput,omitempty"`
+}
+
+// HookSpecificOutput holds the PreToolUse-specific output fields.
+type HookSpecificOutput struct {
+	HookEventName            string      `json:"hookEventName"`
+	PermissionDecision       string      `json:"permissionDecision"`                 // allow, ask, deny
+	PermissionDecisionReason string      `json:"permissionDecisionReason,omitempty"`
+	UpdatedInput             interface{} `json:"updatedInput,omitempty"`
 }

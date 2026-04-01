@@ -39,10 +39,17 @@ func TestFormatHookOutput_Allow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if output.Decision != "allow" {
-		t.Errorf("expected allow, got %s", output.Decision)
+	s := output.HookSpecificOutput
+	if s == nil {
+		t.Fatal("expected hookSpecificOutput to be set")
 	}
-	if output.UpdatedInput != nil {
+	if s.HookEventName != "PreToolUse" {
+		t.Errorf("expected hookEventName=PreToolUse, got %s", s.HookEventName)
+	}
+	if s.PermissionDecision != "allow" {
+		t.Errorf("expected permissionDecision=allow, got %s", s.PermissionDecision)
+	}
+	if s.UpdatedInput != nil {
 		t.Error("expected no updatedInput for plain allow")
 	}
 }
@@ -59,19 +66,24 @@ func TestFormatHookOutput_AllowWithRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var output api.HookOutput
-	if err := json.Unmarshal(data, &output); err != nil {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
 
-	if output.Decision != "allow" {
-		t.Errorf("expected allow, got %s", output.Decision)
+	specific, ok := raw["hookSpecificOutput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected hookSpecificOutput object")
 	}
-	if output.UpdatedInput == nil {
+	if specific["permissionDecision"] != "allow" {
+		t.Errorf("expected allow, got %v", specific["permissionDecision"])
+	}
+	updated, ok := specific["updatedInput"].(map[string]interface{})
+	if !ok {
 		t.Fatal("expected updatedInput for allow with rewrite")
 	}
-	if output.UpdatedInput.Command != "npm install axios@1.7.0" {
-		t.Errorf("expected rewritten command, got %s", output.UpdatedInput.Command)
+	if updated["command"] != "npm install axios@1.7.0" {
+		t.Errorf("expected rewritten command, got %v", updated["command"])
 	}
 }
 
@@ -87,19 +99,27 @@ func TestFormatHookOutput_Ask(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var output api.HookOutput
-	if err := json.Unmarshal(data, &output); err != nil {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
 
-	if output.Decision != "ask" {
-		t.Errorf("expected ask, got %s", output.Decision)
+	specific, ok := raw["hookSpecificOutput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected hookSpecificOutput object")
 	}
-	if output.Reason == "" {
-		t.Error("expected reason for ask")
+	if specific["permissionDecision"] != "ask" {
+		t.Errorf("expected ask, got %v", specific["permissionDecision"])
 	}
-	if output.UpdatedInput == nil || output.UpdatedInput.Command != "npm install pkg@1.2.0" {
-		t.Error("expected updatedInput for ask with rewrite")
+	if specific["permissionDecisionReason"] == nil || specific["permissionDecisionReason"] == "" {
+		t.Error("expected permissionDecisionReason for ask")
+	}
+	updated, ok := specific["updatedInput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected updatedInput for ask with rewrite")
+	}
+	if updated["command"] != "npm install pkg@1.2.0" {
+		t.Errorf("expected rewritten command, got %v", updated["command"])
 	}
 }
 
@@ -114,16 +134,20 @@ func TestFormatHookOutput_Deny(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var output api.HookOutput
-	if err := json.Unmarshal(data, &output); err != nil {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
 
-	if output.Decision != "deny" {
-		t.Errorf("expected deny, got %s", output.Decision)
+	specific, ok := raw["hookSpecificOutput"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected hookSpecificOutput object")
 	}
-	if output.Reason != "known malware" {
-		t.Errorf("expected reason, got %s", output.Reason)
+	if specific["permissionDecision"] != "deny" {
+		t.Errorf("expected deny, got %v", specific["permissionDecision"])
+	}
+	if specific["permissionDecisionReason"] != "known malware" {
+		t.Errorf("expected reason, got %v", specific["permissionDecisionReason"])
 	}
 }
 

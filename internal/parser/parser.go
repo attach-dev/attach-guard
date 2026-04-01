@@ -2,6 +2,7 @@
 package parser
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/attach-dev/attach-guard/internal/parser/npm"
@@ -29,6 +30,12 @@ func Parse(rawCommand string) *api.ParsedCommand {
 	// Truncate at the first shell operator to only parse the first command segment
 	tokens = firstCommandSegment(tokens)
 
+	// Strip common command prefixes (sudo, env, env-var assignments)
+	tokens = unwrapPrefixes(tokens)
+	if len(tokens) == 0 {
+		return nil
+	}
+
 	// Try npm first
 	if cmd := npm.Parse(tokens, rawCommand); cmd != nil {
 		return cmd
@@ -45,6 +52,79 @@ func Parse(rawCommand string) *api.ParsedCommand {
 // IsInstallCommand returns true if the raw command is a guarded install command.
 func IsInstallCommand(rawCommand string) bool {
 	return Parse(rawCommand) != nil
+}
+
+// unwrapPrefixes strips common command prefixes like sudo, env, and
+// environment variable assignments (KEY=val) so the underlying package
+// manager command is visible to the parsers.
+func unwrapPrefixes(tokens []string) []string {
+	for len(tokens) > 0 {
+		tok := tokens[0]
+
+		// sudo — skip it (and optional -E, -u user, etc.)
+		if filepath.Base(tok) == "sudo" {
+			tokens = tokens[1:]
+			// Skip sudo flags
+			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
+				flag := tokens[0]
+				tokens = tokens[1:]
+				// -u takes a following argument
+				if (flag == "-u" || flag == "--user") && len(tokens) > 0 {
+					tokens = tokens[1:]
+				}
+			}
+			continue
+		}
+
+		// env — skip it and any env flags / VAR=val assignments
+		if filepath.Base(tok) == "env" {
+			tokens = tokens[1:]
+			// Skip env flags and VAR=val pairs
+			for len(tokens) > 0 {
+				if strings.HasPrefix(tokens[0], "-") {
+					tokens = tokens[1:]
+					continue
+				}
+				if strings.Contains(tokens[0], "=") && !strings.HasPrefix(tokens[0], "-") {
+					tokens = tokens[1:]
+					continue
+				}
+				break
+			}
+			continue
+		}
+
+		// Inline env-var assignment (e.g., NODE_ENV=production npm install axios)
+		if strings.Contains(tok, "=") && !strings.HasPrefix(tok, "-") && isEnvVarAssignment(tok) {
+			tokens = tokens[1:]
+			continue
+		}
+
+		// Nothing more to strip
+		break
+	}
+	return tokens
+}
+
+// isEnvVarAssignment returns true if tok looks like KEY=value where KEY is a
+// valid environment variable name (letters, digits, underscores, starting with
+// a letter or underscore).
+func isEnvVarAssignment(tok string) bool {
+	eqIdx := strings.Index(tok, "=")
+	if eqIdx <= 0 {
+		return false
+	}
+	key := tok[:eqIdx]
+	for i, c := range key {
+		if c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			continue
+		}
+		if i > 0 && c >= '0' && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // firstCommandSegment returns tokens up to the first shell operator.
