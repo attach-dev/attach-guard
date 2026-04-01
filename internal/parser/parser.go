@@ -138,9 +138,13 @@ func looksLikeInstallTokens(tokens []string) bool {
 				// bash script.sh ... — stop, these are script arguments
 				return false
 			}
-			// -c was found, skip the command string token and keep scanning
+			// -c was found — re-tokenize the command string and check inside it
 			if i < len(tokens) {
-				i++ // skip the -c argument
+				inner := Tokenize(tokens[i])
+				if looksLikeInstallTokens(inner) {
+					return true
+				}
+				i++ // skip past the -c argument
 			}
 			continue
 		}

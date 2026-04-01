@@ -169,6 +169,8 @@ func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"some-wrapper npm install lodash",
+		"strace bash -c 'npm install axios'",
+		"nohup bash -lc 'npm install lodash'",
 	}
 	for _, cmd := range suspicious {
 		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)

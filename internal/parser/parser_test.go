@@ -296,6 +296,9 @@ func TestLooksLikeInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"watch pnpm add react",
+		"strace bash -c 'npm install axios'",
+		"ltrace sh -c 'pnpm add react'",
+		"nohup bash -lc 'npm install lodash'",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
