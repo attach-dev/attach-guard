@@ -63,7 +63,7 @@ A security guardrail must be a hook because enforcement requires interception at
 - [Go 1.21+](https://go.dev/dl/) (to build from source)
 - A [Socket.dev](https://socket.dev) API token (free tier available)
 
-#### Step 1: Build and install the binary
+### Step 1: Build and install the binary
 
 ```bash
 go build -o attach-guard ./cmd/attach-guard

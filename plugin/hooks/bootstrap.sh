@@ -72,6 +72,8 @@ if [[ ! -x "$BINARY" ]]; then
   fi
 fi
 
+[[ -x "$BINARY" ]] || fatal_hook "binary exists but is not executable: $BINARY"
+
 # Export plugin config directory so the binary can find bundled defaults
 export ATTACH_GUARD_PLUGIN_CONFIG_DIR="${PLUGIN_ROOT}/config"
 
