@@ -36,12 +36,12 @@ func TestTokenize(t *testing.T) {
 
 func TestParse_NPM(t *testing.T) {
 	tests := []struct {
-		name       string
-		command    string
-		isInstall  bool
-		pkgCount   int
-		pkgName    string
-		pkgPinned  bool
+		name      string
+		command   string
+		isInstall bool
+		pkgCount  int
+		pkgName   string
+		pkgPinned bool
 	}{
 		{"npm install single", "npm install axios", true, 1, "axios", false},
 		{"npm i alias", "npm i lodash", true, 1, "lodash", false},
@@ -89,9 +89,9 @@ func TestParse_NPM(t *testing.T) {
 
 func TestParse_NPM_PreActionFlags(t *testing.T) {
 	tests := []struct {
-		name    string
-		command string
-		pkgName string
+		name     string
+		command  string
+		pkgName  string
 		preFlags int
 	}{
 		{"npm prefix flag", "npm --prefix ./app install axios", "axios", 2},
@@ -182,9 +182,9 @@ func TestParse_PNPM_PreActionFlags(t *testing.T) {
 
 func TestParse_ShellOperators(t *testing.T) {
 	tests := []struct {
-		name    string
-		command string
-		pkgName string
+		name     string
+		command  string
+		pkgName  string
 		pkgCount int
 	}{
 		{"chained &&", "npm install axios && npm install lodash", "axios", 1},
@@ -235,6 +235,8 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"env VAR=val npm install", "env NODE_ENV=production npm install axios", "axios"},
 		{"inline env var", "NODE_ENV=production npm install axios", "axios"},
 		{"multiple env vars", "NODE_ENV=production CI=true npm install axios", "axios"},
+		{"env split string npm install", "env -S 'npm install axios'", "axios"},
+		{"env split string with assignment", "env -S 'NODE_ENV=production npm install axios'", "axios"},
 		{"sudo pnpm add", "sudo pnpm add react", "react"},
 		{"env pnpm add", "env pnpm add react", "react"},
 		{"path-qualified sudo", "/usr/bin/sudo npm install axios", "axios"},
@@ -277,6 +279,7 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		"sudo ls -la",
 		"env echo hello",
 		"FOO=bar echo test",
+		"env -S 'echo hello'",
 		"npx create-react-app my-app",
 		"command -v npm",
 		"time echo hello",
@@ -302,6 +305,7 @@ func TestLooksLikeInstall(t *testing.T) {
 		"strace bash -c 'npm install axios'",
 		"ltrace sh -c 'pnpm add react'",
 		"nohup bash -lc 'npm install lodash'",
+		"env -S 'npm install axios'",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
@@ -317,6 +321,7 @@ func TestLooksLikeInstall(t *testing.T) {
 		"ls -la",
 		"pnpm run build",
 		`echo "npm install axios"`,
+		`env -S "echo hello"`,
 		`bash -c "echo hello"`,
 		"bash script.sh npm install axios",
 		"echo npm install axios",

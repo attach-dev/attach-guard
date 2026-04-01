@@ -90,4 +90,18 @@ func TestVerifyReviewFindings(t *testing.T) {
 			t.Errorf("LooksLikeInstall(%q) = true, want false (introspection)", cmd)
 		}
 	}
+
+	// Finding 5: env -S split-string should unwrap and be guarded.
+	envSplitStringCmds := []string{
+		"env -S 'npm install axios'",
+		"env -S 'NODE_ENV=production npm install axios'",
+	}
+	for _, cmd := range envSplitStringCmds {
+		if Parse(cmd) == nil {
+			t.Errorf("Parse(%q) = nil, want install command", cmd)
+		}
+		if !LooksLikeInstall(cmd) {
+			t.Errorf("LooksLikeInstall(%q) = false, want true", cmd)
+		}
+	}
 }

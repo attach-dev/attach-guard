@@ -138,6 +138,19 @@ func shellFlagTakesValue(flag string) bool {
 	}
 }
 
+func envFlagTakesValue(flag string) bool {
+	switch flag {
+	case "-C", "--chdir", "-P", "--path", "-S", "--split-string", "-u", "--unset":
+		return true
+	default:
+		return false
+	}
+}
+
+func isEnvSplitStringFlag(flag string) bool {
+	return flag == "-S" || flag == "--split-string"
+}
+
 // looksLikeInstallTokens checks if a flat token list contains a PM binary
 // followed by an install verb in a plausible command position.
 //
@@ -199,6 +212,37 @@ func looksLikeInstallTokens(tokens []string) bool {
 				return looksLikeInstallTokens(inner)
 			}
 			return false
+		}
+
+		// env may rewrite its argv before execing the underlying command.
+		// Handle env flags, assignments, and -S/--split-string explicitly so
+		// split-string forms do not bypass the heuristic.
+		if base == "env" {
+			i++
+			for i < len(tokens) {
+				tok := tokens[i]
+				if strings.HasPrefix(tok, "-") {
+					i++
+					if isEnvSplitStringFlag(tok) {
+						if i >= len(tokens) {
+							return false
+						}
+						inner := Tokenize(tokens[i])
+						combined := append(inner, tokens[i+1:]...)
+						return looksLikeInstallTokens(combined)
+					}
+					if envFlagTakesValue(tok) && i < len(tokens) {
+						i++
+					}
+					continue
+				}
+				if isEnvVarAssignment(tok) {
+					i++
+					continue
+				}
+				break
+			}
+			continue
 		}
 
 		// Known wrapper — skip it and its flags
@@ -273,13 +317,26 @@ func unwrapPrefixes(tokens []string) []string {
 		// env — skip it and any env flags / VAR=val assignments
 		if base == "env" {
 			tokens = tokens[1:]
-			// Skip env flags and VAR=val pairs
+			// Skip env flags and VAR=val pairs. -S/--split-string retokenizes its
+			// argument because env will split that string into argv before exec.
 			for len(tokens) > 0 {
 				if strings.HasPrefix(tokens[0], "-") {
+					flag := tokens[0]
 					tokens = tokens[1:]
+					if isEnvSplitStringFlag(flag) {
+						if len(tokens) == 0 {
+							return nil
+						}
+						inner := Tokenize(tokens[0])
+						tokens = append(inner, tokens[1:]...)
+						continue
+					}
+					if envFlagTakesValue(flag) && len(tokens) > 0 {
+						tokens = tokens[1:]
+					}
 					continue
 				}
-				if strings.Contains(tokens[0], "=") && !strings.HasPrefix(tokens[0], "-") {
+				if isEnvVarAssignment(tokens[0]) {
 					tokens = tokens[1:]
 					continue
 				}
