@@ -93,8 +93,22 @@ func DefaultConfig() *Config {
 }
 
 // Load loads configuration from the default locations and merges them.
+// Config is loaded in order (later overrides earlier):
+//  1. Built-in defaults
+//  2. Plugin-bundled config (if ATTACH_GUARD_PLUGIN_CONFIG_DIR is set)
+//  3. User-global config (~/.attach-guard/config.yaml)
+//  4. Project-local config (.attach-guard/config.yaml)
+//  5. Environment variable overrides
 func Load() (*Config, error) {
 	cfg := DefaultConfig()
+
+	// Plugin-bundled config (set by bootstrap.sh in plugin mode)
+	if pluginDir := os.Getenv("ATTACH_GUARD_PLUGIN_CONFIG_DIR"); pluginDir != "" {
+		pluginPath := filepath.Join(pluginDir, "config.yaml")
+		if err := mergeFromFile(cfg, pluginPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("loading plugin config %s: %w", pluginPath, err)
+		}
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -23,7 +23,9 @@
 - [ ] Tokenizer: handle `$(...)` command substitution
 - [ ] `sudo` flag-with-value consumption for `--group`, `--host`, `--role`, `--type`, etc.
 - [ ] Deduplicate packages across chained command segments
-- [ ] Claude Code plugin packaging (hook + optional skill)
+- [x] Claude Code plugin packaging (hook + explain skill)
+- [ ] GitHub Actions release workflow for plugin binaries
+- [ ] npm wrapper package for `npx attach-guard` installation
 
 ### Not yet implemented
 

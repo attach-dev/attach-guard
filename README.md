@@ -212,10 +212,13 @@ logging:
 
 ### Config precedence
 
-1. Environment variables
-2. Project-local config (`.attach-guard/config.yaml`)
+Highest priority wins (later sources override earlier):
+
+1. Built-in defaults
+2. Plugin-bundled config (when installed as a plugin)
 3. User-global config (`~/.attach-guard/config.yaml`)
-4. Built-in defaults
+4. Project-local config (`.attach-guard/config.yaml`)
+5. Environment variables
 
 ## Policy Model
 
@@ -278,14 +281,33 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 
 ```bash
 # Run all tests
-go test ./...
+make test
 
 # Build
-go build -o attach-guard ./cmd/attach-guard
+make build
 
 # Evaluate a command
 ./attach-guard evaluate npm install lodash
 ```
+
+### Testing as a Claude Code plugin
+
+The plugin can be tested locally without a remote install. The bootstrap script
+will auto-build the binary from source on first run if Go is installed:
+
+```bash
+claude --plugin-dir ./plugin
+```
+
+To cross-compile binaries for all platforms explicitly:
+
+```bash
+make plugin-build
+```
+
+> **Note:** Remote `claude plugin install` is not yet supported because the plugin
+> does not ship prebuilt binaries. This is tracked in the roadmap (GitHub Actions
+> release workflow).
 
 ## License
 

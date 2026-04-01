@@ -16,3 +16,4 @@ coverage.out
 
 # Build
 dist/
+plugin/hooks/bin/
