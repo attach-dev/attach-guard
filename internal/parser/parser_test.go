@@ -254,6 +254,8 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"bash -c pnpm add", "bash -c 'pnpm add react'", "react"},
 		{"sh -c with double quotes", `sh -c "npm install lodash"`, "lodash"},
 		{"sudo bash -c", "sudo bash -c 'npm install axios'", "axios"},
+		{"bash -c with chained cmds", "bash -c 'npm install axios && npm install lodash'", "axios"},
+		{"sh -c with semicolon chain", "sh -c 'npm install axios; echo done'", "axios"},
 	}
 
 	for _, tt := range tests {

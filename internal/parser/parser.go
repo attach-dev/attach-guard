@@ -296,10 +296,16 @@ func unwrapPrefixes(tokens []string) []string {
 			}
 			if foundC && len(tokens) > 0 {
 				// The next token is the command string; re-tokenize it
+				// and truncate at shell operators so chained commands inside
+				// the -c string (e.g., "npm install axios && rm -rf /")
+				// don't leak into the parser.
 				inner := Tokenize(tokens[0])
+				inner = firstCommandSegment(inner)
 				// Append any remaining tokens (rare but possible)
 				if len(tokens) > 1 {
-					inner = append(inner, tokens[1:]...)
+					remaining := tokens[1:]
+					remaining = firstCommandSegment(remaining)
+					inner = append(inner, remaining...)
 				}
 				tokens = inner
 				continue
