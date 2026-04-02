@@ -38,7 +38,12 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 	if pkg.Pinned {
 		info, err := s.prov.GetPackageScore(ctx, pkg.Ecosystem, pkg.Name, pkg.Version)
 		if err != nil {
-			return nil, fmt.Errorf("evaluating pinned version %s@%s: %w", pkg.Name, pkg.Version, err)
+			// Version not found or provider error — deny for safety
+			return &Result{
+				AllFailed: true,
+				Decision:  api.Deny,
+				Reason:    fmt.Sprintf("could not score %s@%s: %v", pkg.Name, pkg.Version, err),
+			}, nil
 		}
 		input := policy.Input{
 			Ecosystem:         pkg.Ecosystem,
