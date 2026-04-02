@@ -585,10 +585,8 @@ func recordSourceEnvAssignment(tok string, ctx *sourceOverrideContext) {
 			ctx.pipLocal = true
 		}
 	case "PIP_FIND_LINKS":
-		if local, nonLocal := classifyPipSourceOverride(value); nonLocal {
+		if strings.TrimSpace(value) != "" {
 			ctx.pipNonLocal = true
-		} else if local {
-			ctx.pipLocal = true
 		}
 	case "PIP_REQUIREMENT", "PIP_CONSTRAINT", "PIP_NO_INDEX":
 		if strings.TrimSpace(value) != "" {

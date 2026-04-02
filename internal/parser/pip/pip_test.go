@@ -25,7 +25,7 @@ func TestParse(t *testing.T) {
 		{"skip local path", []string{"pip", "install", "."}, false, "pip", 0, "", "", false, true, false},
 		{"skip relative wheel path", []string{"pip", "install", "dist/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
 		{"skip file url", []string{"pip", "install", "file:///tmp/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
-		{"find links local path", []string{"pip", "install", "--find-links", "./dist", "flask"}, false, "pip", 1, "flask", "", false, true, false},
+		{"find links local path", []string{"pip", "install", "--find-links", "./dist", "flask"}, false, "pip", 0, "", "", false, true, true},
 		{"skip remote vcs url", []string{"pip", "install", "git+https://github.com/user/repo.git"}, false, "pip", 0, "", "", false, true, true},
 		{"skip requirement file", []string{"pip", "install", "-r", "requirements.txt"}, false, "pip", 0, "", "", false, true, true},
 		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true, false},

@@ -113,12 +113,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 						disqualify = true
 					}
 					if classifiedSourceValueFlags[name] {
-						if local, nonLocal := parseutil.ClassifyPipLocation(value); local || nonLocal {
+						if strings.TrimSpace(value) != "" {
 							hasUnparsed = true
-							if nonLocal {
-								hasNonLocalUnparsed = true
-								disqualify = true
-							}
+							hasNonLocalUnparsed = true
+							disqualify = true
 						}
 					}
 					continue
@@ -142,12 +140,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 					disqualify = true
 				}
 				if classifiedSourceValueFlags[tok] {
-					if local, nonLocal := parseutil.ClassifyPipLocation(tokens[i]); local || nonLocal {
+					if strings.TrimSpace(tokens[i]) != "" {
 						hasUnparsed = true
-						if nonLocal {
-							hasNonLocalUnparsed = true
-							disqualify = true
-						}
+						hasNonLocalUnparsed = true
+						disqualify = true
 					}
 				}
 				continue
@@ -207,13 +203,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 						cmd.Packages = nil
 					}
 					if classifiedSourceValueFlags[name] {
-						if local, nonLocal := parseutil.ClassifyPipLocation(value); local || nonLocal {
+						if strings.TrimSpace(value) != "" {
 							cmd.HasUnparsedArgs = true
-							if nonLocal {
-								disqualify = true
-								cmd.HasNonLocalUnparsedArgs = true
-								cmd.Packages = nil
-							}
+							disqualify = true
+							cmd.HasNonLocalUnparsedArgs = true
+							cmd.Packages = nil
 						}
 					}
 					if unparsedValueFlags[name] {
@@ -243,13 +237,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 					cmd.Packages = nil
 				}
 				if classifiedSourceValueFlags[tok] {
-					if local, nonLocal := parseutil.ClassifyPipLocation(tokens[i]); local || nonLocal {
+					if strings.TrimSpace(tokens[i]) != "" {
 						cmd.HasUnparsedArgs = true
-						if nonLocal {
-							disqualify = true
-							cmd.HasNonLocalUnparsedArgs = true
-							cmd.Packages = nil
-						}
+						disqualify = true
+						cmd.HasNonLocalUnparsedArgs = true
+						cmd.Packages = nil
 					}
 				}
 				if unparsedValueFlags[tok] {

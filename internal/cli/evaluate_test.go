@@ -414,15 +414,9 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 	}
 }
 
-func TestEvaluate_LocalFindLinksStillEvaluatesPublicPackages(t *testing.T) {
+func TestEvaluate_LocalFindLinksForcesManualReview(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
-
-	mock.AddVersion("flask", api.VersionInfo{
-		Version:     "3.0.0",
-		PublishedAt: time.Now().Add(-48 * time.Hour),
-		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
-	})
 
 	tests := []string{
 		"pip install --find-links ./dist flask",
@@ -435,14 +429,17 @@ func TestEvaluate_LocalFindLinksStillEvaluatesPublicPackages(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
 		}
-		if result.Decision != api.Allow {
-			t.Fatalf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		if result.Decision != api.Ask {
+			t.Fatalf("expected Ask for %q, got %s: %s", cmd, result.Decision, result.Reason)
 		}
-		if len(result.Packages) != 1 || result.Packages[0].Name != "flask" {
-			t.Fatalf("expected flask to be evaluated for %q, got %#v", cmd, result.Packages)
+		if len(result.Packages) != 0 {
+			t.Fatalf("expected no evaluated packages for %q, got %#v", cmd, result.Packages)
 		}
 		if result.RewrittenCommand != "" {
 			t.Fatalf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "non-local arguments") {
+			t.Fatalf("expected manual-review reason for %q, got %q", cmd, result.Reason)
 		}
 	}
 }
@@ -453,6 +450,8 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 
 	tests := []string{
 		"pip --proxy http://proxy.example install flask",
+		"pip install --find-links ./dist flask",
+		"PIP_FIND_LINKS=./dist pip install flask",
 		"pip install -r requirements.txt",
 		"pip install https://github.com/user/repo/archive/main.tar.gz",
 		"pip install git+https://github.com/user/repo.git",
