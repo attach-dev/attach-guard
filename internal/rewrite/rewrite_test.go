@@ -115,6 +115,19 @@ func TestCommand(t *testing.T) {
 			expected: "go get golang.org/x/net@v0.25.0",
 		},
 		{
+			name: "go rewrite keeps flags before package args",
+			cmd: &api.ParsedCommand{
+				PackageManager: "go",
+				Action:         "get",
+				Flags:          []string{"-u"},
+				Packages: []api.PackageRequest{
+					{Name: "golang.org/x/net", RawSpec: "golang.org/x/net"},
+				},
+			},
+			versions: map[string]string{"golang.org/x/net": "v0.25.0"},
+			expected: "go get -u golang.org/x/net@v0.25.0",
+		},
+		{
 			name: "cargo rewrite uses exact requirement syntax",
 			cmd: &api.ParsedCommand{
 				PackageManager: "cargo",

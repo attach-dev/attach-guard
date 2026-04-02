@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,6 +183,50 @@ func TestListOrderedVersionsGo_ParsesProxyResponses(t *testing.T) {
 	}
 	if ordered[0].Version != "v1.1.0" || ordered[1].Version != "v1.0.0" {
 		t.Fatalf("ordered versions = %#v, want [v1.1.0 v1.0.0]", ordered)
+	}
+}
+
+func TestListOrderedVersionsGo_LimitsInfoFetchesToCandidateCap(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	var (
+		listBody    strings.Builder
+		infoFetches int
+	)
+	for i := 0; i < 15; i++ {
+		if i > 0 {
+			listBody.WriteByte('\n')
+		}
+		fmt.Fprintf(&listBody, "v1.0.%d", i)
+	}
+
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/example.com/mod/@v/list":
+			return newHTTPResponse(http.StatusOK, listBody.String()), nil
+		default:
+			if strings.HasPrefix(req.URL.Path, "/example.com/mod/@v/") && strings.HasSuffix(req.URL.Path, ".info") {
+				infoFetches++
+				version := strings.TrimPrefix(req.URL.Path, "/example.com/mod/@v/")
+				version = strings.TrimSuffix(version, ".info")
+				return newHTTPResponse(http.StatusOK, fmt.Sprintf(`{"Version":"%s","Time":"2024-01-01T00:00:00Z"}`, version)), nil
+			}
+			t.Fatalf("unexpected path %q", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	ordered, err := prov.listOrderedVersionsGo(context.Background(), "example.com/mod")
+	if err != nil {
+		t.Fatalf("listOrderedVersionsGo() error = %v", err)
+	}
+	if len(ordered) != maxCandidates {
+		t.Fatalf("len(ordered) = %d, want %d", len(ordered), maxCandidates)
+	}
+	if infoFetches != maxCandidates {
+		t.Fatalf("info fetches = %d, want %d", infoFetches, maxCandidates)
 	}
 }
 

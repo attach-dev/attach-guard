@@ -560,7 +560,6 @@ func applySourceOverrideContext(cmd *api.ParsedCommand, ctx sourceOverrideContex
 			cmd.HasUnparsedArgs = true
 			cmd.HasNonLocalUnparsedArgs = true
 		} else if ctx.pipLocal {
-			cmd.Packages = nil
 			cmd.HasUnparsedArgs = true
 		}
 	case "go":

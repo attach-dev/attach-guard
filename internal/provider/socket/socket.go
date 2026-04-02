@@ -234,14 +234,25 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 		return nil, fmt.Errorf("fetching versions for %s from go proxy: %w", name, err)
 	}
 
-	var ordered []orderedVersion
+	candidates := make([]orderedVersion, 0, len(strings.Fields(string(body))))
+	for _, version := range strings.Fields(string(body)) {
+		candidates = append(candidates, orderedVersion{Version: version})
+	}
+	candidates = orderGoVersions(candidates)
+	if len(candidates) > maxCandidates {
+		candidates = candidates[:maxCandidates]
+	}
+
+	ordered := make([]orderedVersion, len(candidates))
+	found := make([]bool, len(candidates))
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
 		sem = make(chan struct{}, goInfoFetchConcurrency)
 	)
-	for _, version := range strings.Fields(string(body)) {
-		version := version
+	for idx, candidate := range candidates {
+		idx := idx
+		version := candidate.Version
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -259,16 +270,24 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 			}
 
 			mu.Lock()
-			ordered = append(ordered, orderedVersion{
+			ordered[idx] = orderedVersion{
 				Version:     info.Version,
 				PublishedAt: info.Time,
-			})
+			}
+			found[idx] = true
 			mu.Unlock()
 		}()
 	}
 	wg.Wait()
 
-	return orderGoVersions(ordered), nil
+	filtered := ordered[:0]
+	for i, ok := range found {
+		if ok {
+			filtered = append(filtered, ordered[i])
+		}
+	}
+
+	return filtered, nil
 }
 
 func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([]orderedVersion, error) {

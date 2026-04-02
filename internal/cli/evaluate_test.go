@@ -394,8 +394,6 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		"pip install .",
 		"pip install dist/pkg.whl",
 		"pip install file:///tmp/pkg.whl",
-		"pip install --find-links ./dist flask",
-		"PIP_FIND_LINKS=./dist pip install flask",
 		"go get ./...",
 		"cargo add --path ./local-crate",
 		"python -m pip install requests",
@@ -412,6 +410,39 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		}
 		if result.RewrittenCommand != "" {
 			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_LocalFindLinksStillEvaluatesPublicPackages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	tests := []string{
+		"pip install --find-links ./dist flask",
+		"PIP_FIND_LINKS=./dist pip install flask",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if len(result.Packages) != 1 || result.Packages[0].Name != "flask" {
+			t.Fatalf("expected flask to be evaluated for %q, got %#v", cmd, result.Packages)
+		}
+		if result.RewrittenCommand != "" {
+			t.Fatalf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
 		}
 	}
 }
@@ -646,6 +677,35 @@ func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 		if result.RewrittenCommand != tt.expected {
 			t.Errorf("expected rewritten command %q, got %q", tt.expected, result.RewrittenCommand)
 		}
+	}
+}
+
+func TestEvaluate_GoRewritePreservesFlagPosition(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.26.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.25.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "go get -u golang.org/x/net", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "go get -u golang.org/x/net@v0.25.0" {
+		t.Fatalf("expected go flags before package in rewrite, got %q", result.RewrittenCommand)
 	}
 }
 

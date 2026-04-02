@@ -117,8 +117,8 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 							hasUnparsed = true
 							if nonLocal {
 								hasNonLocalUnparsed = true
+								disqualify = true
 							}
-							disqualify = true
 						}
 					}
 					continue
@@ -146,8 +146,8 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 						hasUnparsed = true
 						if nonLocal {
 							hasNonLocalUnparsed = true
+							disqualify = true
 						}
-						disqualify = true
 					}
 				}
 				continue
@@ -208,11 +208,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 					}
 					if classifiedSourceValueFlags[name] {
 						if local, nonLocal := parseutil.ClassifyPipLocation(value); local || nonLocal {
-							disqualify = true
 							cmd.HasUnparsedArgs = true
-							cmd.Packages = nil
 							if nonLocal {
+								disqualify = true
 								cmd.HasNonLocalUnparsedArgs = true
+								cmd.Packages = nil
 							}
 						}
 					}
@@ -244,11 +244,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				}
 				if classifiedSourceValueFlags[tok] {
 					if local, nonLocal := parseutil.ClassifyPipLocation(tokens[i]); local || nonLocal {
-						disqualify = true
 						cmd.HasUnparsedArgs = true
-						cmd.Packages = nil
 						if nonLocal {
+							disqualify = true
 							cmd.HasNonLocalUnparsedArgs = true
+							cmd.Packages = nil
 						}
 					}
 				}

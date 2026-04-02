@@ -59,7 +59,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			cmd.Flags = append(cmd.Flags, tok)
 			continue
 		}
-		if strings.HasPrefix(tok, "./") || strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, "/") {
+		if tok == "." || tok == ".." || strings.HasPrefix(tok, "./") || strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, "/") {
 			cmd.HasUnparsedArgs = true
 			continue
 		}

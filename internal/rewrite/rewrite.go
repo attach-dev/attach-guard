@@ -22,6 +22,11 @@ func Command(cmd *api.ParsedCommand, selectedVersions map[string]string) string 
 	// Action verb
 	parts = append(parts, cmd.Action)
 
+	// go get expects flags before package args.
+	if cmd.PackageManager == "go" {
+		parts = append(parts, cmd.Flags...)
+	}
+
 	// Packages
 	for _, pkg := range cmd.Packages {
 		if v, ok := selectedVersions[pkg.Name]; ok && v != "" {
@@ -32,7 +37,9 @@ func Command(cmd *api.ParsedCommand, selectedVersions map[string]string) string 
 	}
 
 	// Post-action flags
-	parts = append(parts, cmd.Flags...)
+	if cmd.PackageManager != "go" {
+		parts = append(parts, cmd.Flags...)
+	}
 
 	return strings.Join(parts, " ")
 }

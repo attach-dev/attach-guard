@@ -18,6 +18,8 @@ func TestParse(t *testing.T) {
 		{"latest", []string{"go", "get", "golang.org/x/net@latest"}, false, 1, "golang.org/x/net", "", false, false, false},
 		{"exact semver", []string{"go", "get", "golang.org/x/net@v0.25.0"}, false, 1, "golang.org/x/net", "v0.25.0", true, false, false},
 		{"local path deferred", []string{"go", "get", "./..."}, false, 0, "", "", false, true, false},
+		{"current module deferred", []string{"go", "get", "."}, false, 0, "", "", false, true, false},
+		{"parent module deferred", []string{"go", "get", ".."}, false, 0, "", "", false, true, false},
 		{"query deferred", []string{"go", "get", "golang.org/x/net@upgrade"}, false, 0, "", "", false, true, true},
 		{"prefix deferred", []string{"go", "get", "golang.org/x/net@v0.3"}, false, 0, "", "", false, true, true},
 		{"bare get", []string{"go", "get"}, false, 0, "", "", false, false, false},
