@@ -150,4 +150,9 @@ if [[ -z "${SOCKET_API_TOKEN:-}" && -n "${CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN:
   export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN"
 fi
 
+# Require a Socket API token — without it, every lookup returns "provider unavailable"
+if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
+  fatal_error "Socket API token not configured. Run: claude plugin config set attach-guard@attach-dev socket_api_token <your-token>  (get a free token at https://socket.dev)"
+fi
+
 exec "$BINARY" "$@"
