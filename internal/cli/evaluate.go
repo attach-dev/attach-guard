@@ -168,6 +168,14 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		}
 	}
 
+	for _, cmd := range enabledCmds {
+		if cmd.HasUnparsedArgs && len(cmd.Packages) > 0 {
+			overallDecision = worseDecision(overallDecision, api.Ask)
+			reasons = append(reasons, fmt.Sprintf("%s: command contains arguments that could not be evaluated; manual review required", cmd.PackageManager))
+			break
+		}
+	}
+
 	overallReason := strings.Join(reasons, "; ")
 
 	evalResult := &api.EvaluationResult{
@@ -234,6 +242,12 @@ func (e *Evaluator) packageManagerEnabled(pm string) bool {
 		return e.cfg.PackageManagers.NPM
 	case "pnpm":
 		return e.cfg.PackageManagers.PNPM
+	case "pip", "pip3":
+		return e.cfg.PackageManagers.Pip
+	case "go":
+		return e.cfg.PackageManagers.Go
+	case "cargo":
+		return e.cfg.PackageManagers.Cargo
 	default:
 		return true
 	}
@@ -251,6 +265,9 @@ func disabledPackageManagersReason(disabledPMs []string) string {
 }
 
 func rewriteEligible(rawCommand string, cmd *api.ParsedCommand) bool {
+	if cmd.HasUnparsedArgs {
+		return false
+	}
 	tokens := parser.Tokenize(rawCommand)
 	if len(tokens) == 0 || filepath.Base(tokens[0]) != cmd.PackageManager {
 		return false

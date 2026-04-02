@@ -18,5 +18,8 @@ policy:
 package_managers:
   npm: true
   pnpm: true
+  pip: true
+  go: true
+  cargo: true
 logging:
   path: "~/.attach-guard/audit.jsonl"

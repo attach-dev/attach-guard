@@ -51,8 +51,11 @@ type AutoRewriteConfig struct {
 
 // PMConfig enables/disables package managers.
 type PMConfig struct {
-	NPM  bool `yaml:"npm"`
-	PNPM bool `yaml:"pnpm"`
+	NPM   bool `yaml:"npm"`
+	PNPM  bool `yaml:"pnpm"`
+	Pip   bool `yaml:"pip"`
+	Go    bool `yaml:"go"`
+	Cargo bool `yaml:"cargo"`
 }
 
 // LoggingConfig configures audit logging.
@@ -82,10 +85,13 @@ func DefaultConfig() *Config {
 				CI:    false,
 			},
 		},
-		PackageManagers: PMConfig{
-			NPM:  true,
-			PNPM: true,
-		},
+			PackageManagers: PMConfig{
+				NPM:   true,
+				PNPM:  true,
+				Pip:   true,
+				Go:    true,
+				Cargo: true,
+			},
 		Logging: LoggingConfig{
 			Path: "~/.attach-guard/audit.jsonl",
 		},

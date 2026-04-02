@@ -9,13 +9,15 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
 const (
-	baseURL       = "https://api.socket.dev/v0"
+	baseURL        = "https://api.socket.dev/v0"
 	defaultTimeout = 10 * time.Second
 )
 
@@ -104,28 +106,17 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 // maxCandidates is the number of recent versions to score via the Socket API.
 const maxCandidates = 10
 
-// ListVersions fetches available versions from the npm registry (newest first)
-// and scores the top candidates via the Socket score endpoint.
+// ListVersions fetches available versions from the ecosystem registry (newest
+// first) and scores the top candidates via the Socket score endpoint.
 func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]api.VersionInfo, error) {
-	// Fetch version list from the npm registry
-	registryURL := fmt.Sprintf("https://registry.npmjs.org/%s", name)
-	body, err := p.doGetPublic(ctx, registryURL)
+	ordered, err := p.listOrderedVersions(ctx, ecosystem, name)
 	if err != nil {
-		return nil, fmt.Errorf("fetching versions for %s from npm registry: %w", name, err)
+		return nil, err
 	}
-
-	var reg npmRegistryResponse
-	if err := json.Unmarshal(body, &reg); err != nil {
-		return nil, fmt.Errorf("parsing npm registry response for %s: %w", name, err)
-	}
-
-	// Build ordered version list from dist-tags.latest backwards through time
-	ordered := reg.orderedVersions()
 	if len(ordered) == 0 {
 		return nil, nil
 	}
 
-	// Score the top N candidates via Socket
 	limit := maxCandidates
 	if len(ordered) < limit {
 		limit = len(ordered)
@@ -161,13 +152,146 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 	return versions, nil
 }
 
+func (p *Provider) listOrderedVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]orderedVersion, error) {
+	switch ecosystem {
+	case api.EcosystemNPM, api.EcosystemPNPM:
+		return p.listOrderedVersionsNPM(ctx, name)
+	case api.EcosystemPyPI:
+		return p.listOrderedVersionsPyPI(ctx, name)
+	case api.EcosystemGo:
+		return p.listOrderedVersionsGo(ctx, name)
+	case api.EcosystemCargo:
+		return p.listOrderedVersionsCargo(ctx, name)
+	default:
+		return nil, fmt.Errorf("unsupported ecosystem %q", ecosystem)
+	}
+}
+
+func (p *Provider) listOrderedVersionsNPM(ctx context.Context, name string) ([]orderedVersion, error) {
+	registryURL := fmt.Sprintf("https://registry.npmjs.org/%s", name)
+	body, err := p.doGetPublic(ctx, registryURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetching versions for %s from npm registry: %w", name, err)
+	}
+
+	var reg npmRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return nil, fmt.Errorf("parsing npm registry response for %s: %w", name, err)
+	}
+	return reg.orderedVersions(), nil
+}
+
+func (p *Provider) listOrderedVersionsPyPI(ctx context.Context, name string) ([]orderedVersion, error) {
+	registryURL := fmt.Sprintf("https://pypi.org/pypi/%s/json", name)
+	body, err := p.doGetPublic(ctx, registryURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetching versions for %s from pypi: %w", name, err)
+	}
+
+	var reg pypiRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return nil, fmt.Errorf("parsing pypi response for %s: %w", name, err)
+	}
+
+	var ordered []orderedVersion
+	for version, files := range reg.Releases {
+		var publishedAt time.Time
+		deprecated := len(files) > 0
+		for _, file := range files {
+			if ts, err := time.Parse(time.RFC3339, file.UploadTimeISO8601); err == nil && ts.After(publishedAt) {
+				publishedAt = ts
+			}
+			if !file.Yanked {
+				deprecated = false
+			}
+		}
+		ordered = append(ordered, orderedVersion{
+			Version:     version,
+			PublishedAt: publishedAt,
+			Deprecated:  deprecated,
+		})
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
+	})
+	return ordered, nil
+}
+
+func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]orderedVersion, error) {
+	escaped := escapeModulePath(name)
+	registryURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/list", escaped)
+	body, err := p.doGetPublic(ctx, registryURL)
+	if err != nil {
+		return nil, fmt.Errorf("fetching versions for %s from go proxy: %w", name, err)
+	}
+
+	var ordered []orderedVersion
+	for _, version := range strings.Fields(string(body)) {
+		infoURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.info", escaped, version)
+		infoBody, err := p.doGetPublic(ctx, infoURL)
+		if err != nil {
+			continue
+		}
+		var info goProxyVersionInfo
+		if err := json.Unmarshal(infoBody, &info); err != nil {
+			continue
+		}
+		ordered = append(ordered, orderedVersion{
+			Version:     info.Version,
+			PublishedAt: info.Time,
+		})
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
+	})
+	return ordered, nil
+}
+
+func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([]orderedVersion, error) {
+	registryURL := fmt.Sprintf("https://crates.io/api/v1/crates/%s", name)
+	body, err := p.doGetPublicWithHeaders(ctx, registryURL, map[string]string{
+		"User-Agent": "attach-guard",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetching versions for %s from crates.io: %w", name, err)
+	}
+
+	var reg cargoRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return nil, fmt.Errorf("parsing crates.io response for %s: %w", name, err)
+	}
+
+	ordered := make([]orderedVersion, 0, len(reg.Versions))
+	for _, version := range reg.Versions {
+		ordered = append(ordered, orderedVersion{
+			Version:     version.Num,
+			PublishedAt: version.CreatedAt,
+			Deprecated:  version.Yanked,
+		})
+	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
+	})
+	return ordered, nil
+}
+
 // doGetPublic makes a GET request without auth (for public registries).
 func (p *Provider) doGetPublic(ctx context.Context, url string) ([]byte, error) {
+	return p.doGetPublicWithHeaders(ctx, url, nil)
+}
+
+func (p *Provider) doGetPublicWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -217,9 +341,28 @@ func socketEcosystem(eco api.Ecosystem) string {
 	switch eco {
 	case api.EcosystemNPM, api.EcosystemPNPM:
 		return "npm"
+	case api.EcosystemPyPI:
+		return "pypi"
+	case api.EcosystemGo:
+		return "go"
+	case api.EcosystemCargo:
+		return "crates"
 	default:
 		return string(eco)
 	}
+}
+
+func escapeModulePath(module string) string {
+	var b strings.Builder
+	for _, r := range module {
+		if unicode.IsUpper(r) {
+			b.WriteRune('!')
+			b.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Socket API response types — internal only
@@ -236,6 +379,30 @@ type issueEntry struct {
 	Severity string `json:"severity"`
 	Title    string `json:"title"`
 	Category string `json:"category"`
+}
+
+type pypiRegistryResponse struct {
+	Releases map[string][]pypiFileInfo `json:"releases"`
+}
+
+type pypiFileInfo struct {
+	UploadTimeISO8601 string `json:"upload_time_iso_8601"`
+	Yanked            bool   `json:"yanked"`
+}
+
+type goProxyVersionInfo struct {
+	Version string    `json:"Version"`
+	Time    time.Time `json:"Time"`
+}
+
+type cargoRegistryResponse struct {
+	Versions []cargoVersionInfo `json:"versions"`
+}
+
+type cargoVersionInfo struct {
+	Num       string    `json:"num"`
+	CreatedAt time.Time `json:"created_at"`
+	Yanked    bool      `json:"yanked"`
 }
 
 // npm registry response types

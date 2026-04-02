@@ -16,8 +16,11 @@ const (
 type Ecosystem string
 
 const (
-	EcosystemNPM  Ecosystem = "npm"
-	EcosystemPNPM Ecosystem = "pnpm"
+	EcosystemNPM   Ecosystem = "npm"
+	EcosystemPNPM  Ecosystem = "pnpm"
+	EcosystemPyPI  Ecosystem = "pypi"
+	EcosystemGo    Ecosystem = "go"
+	EcosystemCargo Ecosystem = "cargo"
 )
 
 // PackageRequest represents a single package requested for installation.
@@ -95,6 +98,7 @@ type ParsedCommand struct {
 	Packages       []PackageRequest `json:"packages"`
 	PreActionFlags []string         `json:"pre_action_flags"` // flags before the action verb (e.g. --filter web)
 	Flags          []string         `json:"flags"`            // flags after the action verb (e.g. --save-dev)
+	HasUnparsedArgs bool            `json:"has_unparsed_args"` // true if recognized args were skipped and could not be evaluated safely
 	IsInstall      bool             `json:"is_install"`
 	RawCommand     string           `json:"raw_command"`
 }

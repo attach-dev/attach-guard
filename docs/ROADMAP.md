@@ -37,7 +37,9 @@
 ## Phase 2: Ecosystem Expansion
 
 - [ ] Yarn support
-- [ ] Python support (uv, pip)
+- [x] Python support (direct `pip` / `pip3 install`)
+- [x] Go support (direct `go get`)
+- [x] Rust support (direct `cargo add`)
 - [ ] Lockfile preview resolution
 - [ ] Better transitive dependency visibility
 - [ ] Provider fusion (combine multiple providers)

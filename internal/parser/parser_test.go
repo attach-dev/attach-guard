@@ -397,6 +397,12 @@ func TestIsInstallCommand(t *testing.T) {
 		"pnpm add express",
 		"pnpm --filter web add react",
 		"npm --prefix ./app install axios",
+		"pip install requests",
+		"go get golang.org/x/net",
+		"cargo add serde",
+		"pip install .",
+		"go get ./...",
+		"cargo add --git https://github.com/user/repo",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {
@@ -412,10 +418,56 @@ func TestIsInstallCommand(t *testing.T) {
 		"pnpm run build",
 		"npm install",
 		"echo hello",
+		"pip --version",
+		"go build ./...",
+		"cargo build",
 	}
 	for _, cmd := range nonInstallCmds {
 		if IsInstallCommand(cmd) {
 			t.Errorf("IsInstallCommand(%q) = true, want false", cmd)
 		}
+	}
+}
+
+func TestParse_MultiEcosystemCommands(t *testing.T) {
+	tests := []struct {
+		name         string
+		command      string
+		wantPM       string
+		wantCount    int
+		wantName     string
+		wantVersion  string
+		wantPinned   bool
+		wantUnparsed bool
+	}{
+		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false},
+		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true},
+		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false},
+		{"go deferred local", "go get ./...", "go", 0, "", "", false, true},
+		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false},
+		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("Parse(%q).PackageManager = %q, want %q", tt.command, result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != tt.wantCount {
+				t.Fatalf("Parse(%q) found %d packages, want %d", tt.command, len(result.Packages), tt.wantCount)
+			}
+			if result.HasUnparsedArgs != tt.wantUnparsed {
+				t.Fatalf("Parse(%q).HasUnparsedArgs = %v, want %v", tt.command, result.HasUnparsedArgs, tt.wantUnparsed)
+			}
+			if tt.wantCount > 0 {
+				if result.Packages[0].Name != tt.wantName || result.Packages[0].Version != tt.wantVersion || result.Packages[0].Pinned != tt.wantPinned {
+					t.Fatalf("Parse(%q).Packages[0] = %#v, want name=%q version=%q pinned=%v", tt.command, result.Packages[0], tt.wantName, tt.wantVersion, tt.wantPinned)
+				}
+			}
+		})
 	}
 }

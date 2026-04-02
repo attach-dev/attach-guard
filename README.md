@@ -10,7 +10,7 @@ AI coding agents and developers install packages before anyone reviews them. Exi
 
 attach-guard intercepts package installation commands and evaluates them against policy **before execution**. It is not an advisory scanner. It is a hard enforcement boundary.
 
-- Intercepts `npm install`, `npm i`, `pnpm add` commands
+- Intercepts direct `npm install`, `npm i`, `pnpm add`, `pip install`, `pip3 install`, `go get`, and `cargo add` commands
 - Checks package scores, age, and alerts via a pluggable risk provider
 - Denies known malware and low-score packages
 - Asks for confirmation on gray-band packages
@@ -88,7 +88,7 @@ During installation or enablement, Claude Code will prompt for your Socket API t
 The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no further setup needed.
 
 Once running, the plugin provides:
-- **Automatic enforcement** — every `npm install` / `pnpm add` is intercepted and checked
+- **Automatic enforcement** — direct `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands are intercepted and checked
 - **`/explain <package>`** — look up any package's risk score, alerts, and version history
 
 #### Local development (from source)
@@ -298,10 +298,10 @@ Highest priority wins (later sources override earlier):
 
 ### Unpinned version handling
 
-When you run `npm install axios` (no version pin):
-- attach-guard fetches candidate versions from the npm registry and scores them via Socket.dev
+When you run an unpinned supported command such as `npm install axios`, `pip install requests`, `go get golang.org/x/net`, or `cargo add serde`:
+- attach-guard fetches candidate versions from the matching registry and scores them via Socket.dev
 - If the latest passes policy, the command runs as-is
-- If the latest fails but an older version passes, attach-guard suggests a rewrite: `npm install axios@1.14.0`
+- If the latest fails but an older version passes, attach-guard suggests a rewrite using ecosystem-native syntax
 - In Claude Code mode: returns `ask` with the rewritten command via `updatedInput`
 - If no version passes, denies
 
@@ -332,7 +332,8 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 
 ## Current Limitations
 
-- npm and pnpm only (no yarn, pip, uv yet)
+- Direct `pip` / `pip3`, `go get`, and `cargo add` are supported, but wrapper forms such as `python -m pip`, `uv pip`, `go install`, and `cargo install` are not yet guarded
+- pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
 - No transitive dependency analysis
 - No lockfile graph support
 - Single provider at a time

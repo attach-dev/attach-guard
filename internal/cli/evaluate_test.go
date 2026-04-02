@@ -383,6 +383,161 @@ func TestEvaluate_PreActionFlags(t *testing.T) {
 	}
 }
 
+func TestEvaluate_RecognizedButNotGuardedCommandsAllow(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	tests := []string{
+		"pip install .",
+		"pip install -r requirements.txt",
+		"pip install https://github.com/user/repo/archive/main.tar.gz",
+		"pip install requests>=2.0",
+		"pip install requests[security]",
+		"go get ./...",
+		"cargo add --git https://github.com/user/repo",
+		"cargo add --path ./local-crate",
+		"cargo add serde@1.0.200",
+		"python -m pip install requests",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_MixedParsedAndUnparsedArgsForceAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	tests := []string{
+		"pip install . flask",
+		"pip install flask requests>=2.0",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Ask {
+			t.Errorf("expected Ask for mixed parsed/unparsed command %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Errorf("expected no rewritten command for %q, got %q", cmd, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "could not be evaluated") {
+			t.Errorf("expected manual review reason for %q, got %q", cmd, result.Reason)
+		}
+	}
+}
+
+func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.32.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.31.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.26.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.25.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.201",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.200",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	tests := []struct {
+		command  string
+		expected string
+	}{
+		{"pip install requests", "pip install requests==2.31.0"},
+		{"go get golang.org/x/net", "go get golang.org/x/net@v0.25.0"},
+		{"cargo add serde", "cargo add serde@=1.0.200"},
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, tt := range tests {
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", tt.command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for %q, got %s: %s", tt.command, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != tt.expected {
+			t.Errorf("expected rewritten command %q, got %q", tt.expected, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_DisabledNewPackageManagersAllowPassthrough(t *testing.T) {
+	tests := []struct {
+		command string
+		disable func(*config.Config)
+	}{
+		{"pip install requests", func(cfg *config.Config) { cfg.PackageManagers.Pip = false }},
+		{"go get golang.org/x/net", func(cfg *config.Config) { cfg.PackageManagers.Go = false }},
+		{"cargo add serde", func(cfg *config.Config) { cfg.PackageManagers.Cargo = false }},
+	}
+
+	for _, tt := range tests {
+		cfg := config.DefaultConfig()
+		tt.disable(cfg)
+		mock := provider.NewMockProvider()
+		eval := NewEvaluator(cfg, mock)
+
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", tt.command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for disabled PM on %q, got %s", tt.command, result.Decision)
+		}
+		if !strings.Contains(result.Reason, "not enabled") {
+			t.Errorf("expected disabled PM reason for %q, got %q", tt.command, result.Reason)
+		}
+	}
+}
+
 func TestEvaluate_GrayBandAsk(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()

@@ -5,7 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/attach-dev/attach-guard/internal/parser/cargo"
+	"github.com/attach-dev/attach-guard/internal/parser/gomod"
 	"github.com/attach-dev/attach-guard/internal/parser/npm"
+	"github.com/attach-dev/attach-guard/internal/parser/pip"
 	"github.com/attach-dev/attach-guard/internal/parser/pnpm"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
@@ -21,8 +24,10 @@ var shellOperators = map[string]bool{
 }
 
 // Parse attempts to parse a raw command string as a package manager install command.
-// Returns the first parsed install command in evaluation order, or nil if the
-// command is not a recognized install command.
+// Returns the first recognized install-like command in evaluation order, or nil
+// if the command is not recognized as a guarded package-manager install form.
+// Some recognized commands may intentionally contain zero evaluable packages
+// when all positional args were skipped as unsupported inputs.
 func Parse(rawCommand string) *api.ParsedCommand {
 	for _, cmd := range ParseAll(rawCommand) {
 		return cmd
@@ -59,6 +64,18 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string) []*api.ParsedCo
 	}
 	if cmd := pnpm.Parse(tokens, rawCommand); cmd != nil {
 		results = append(results, cmd)
+		return results
+	}
+	if cmd := pip.Parse(tokens, rawCommand); cmd != nil {
+		results = append(results, cmd)
+		return results
+	}
+	if cmd := gomod.Parse(tokens, rawCommand); cmd != nil {
+		results = append(results, cmd)
+		return results
+	}
+	if cmd := cargo.Parse(tokens, rawCommand); cmd != nil {
+		results = append(results, cmd)
 	}
 	return results
 }
@@ -80,7 +97,9 @@ func ParseAll(rawCommand string) []*api.ParsedCommand {
 	return results
 }
 
-// IsInstallCommand returns true if the raw command is a guarded install command.
+// IsInstallCommand returns true if the raw command is a recognized install-like
+// package-manager command. Recognized commands may still contain zero
+// evaluable packages when all positional inputs were skipped as unsupported.
 func IsInstallCommand(rawCommand string) bool {
 	return Parse(rawCommand) != nil
 }
@@ -90,12 +109,17 @@ var installVerbs = map[string]bool{
 	"install": true,
 	"i":       true,
 	"add":     true,
+	"get":     true,
 }
 
 // pmBinaries are package manager basenames we guard.
 var pmBinaries = map[string]bool{
-	"npm":  true,
-	"pnpm": true,
+	"npm":   true,
+	"pnpm":  true,
+	"pip":   true,
+	"pip3":  true,
+	"go":    true,
+	"cargo": true,
 }
 
 // LooksLikeInstall returns true if the raw command contains tokens that look
@@ -519,4 +543,3 @@ func commandSegments(tokens []string) [][]string {
 	}
 	return segments
 }
-
