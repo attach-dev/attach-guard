@@ -3,6 +3,7 @@ package socket
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -55,6 +56,23 @@ func TestSocketEcosystem(t *testing.T) {
 	for _, tt := range tests {
 		if got := socketEcosystem(tt.eco); got != tt.want {
 			t.Errorf("socketEcosystem(%q) = %q, want %q", tt.eco, got, tt.want)
+		}
+	}
+}
+
+func TestPurlEcosystem(t *testing.T) {
+	tests := []struct {
+		eco  api.Ecosystem
+		want string
+	}{
+		{api.EcosystemPyPI, "pypi"},
+		{api.EcosystemGo, "golang"},
+		{api.EcosystemCargo, "cargo"},
+	}
+
+	for _, tt := range tests {
+		if got := purlEcosystem(tt.eco); got != tt.want {
+			t.Errorf("purlEcosystem(%q) = %q, want %q", tt.eco, got, tt.want)
 		}
 	}
 }
@@ -249,12 +267,181 @@ func TestListOrderedVersionsGo_TreatsProxy404AsUnsupportedSource(t *testing.T) {
 	}
 }
 
-func TestGetPackageScoreGo_TreatsSocket404AsUnsupportedSource(t *testing.T) {
+func TestGetScoreByPurl_ParsesNDJSON(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/v0/go/private.example.com/mod/v1.2.3/score" {
+		if req.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != "/v0/purl" {
 			t.Fatalf("unexpected path %q", req.URL.Path)
 		}
-		return newHTTPResponse(http.StatusNotFound, "not found"), nil
+
+		var payload purlRequest
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		if len(payload.Components) != 1 || payload.Components[0].PURL != "pkg:pypi/litellm@1.82.8" {
+			t.Fatalf("components = %#v, want single litellm purl", payload.Components)
+		}
+
+		return newHTTPResponse(http.StatusOK, strings.Join([]string{
+			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+			`{"_type":"summary"}`,
+		}, "\n")), nil
+	})
+
+	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
+	if err != nil {
+		t.Fatalf("getScoreByPurl() error = %v", err)
+	}
+	if info.Version != "1.82.8" {
+		t.Fatalf("Version = %q, want 1.82.8", info.Version)
+	}
+	if info.Score.SupplyChain != 73 || info.Score.Overall != 81 {
+		t.Fatalf("score = %+v, want supply=73 overall=81", info.Score)
+	}
+	if len(info.Alerts) != 1 || info.Alerts[0].Title != "malware" {
+		t.Fatalf("alerts = %#v, want single malware alert", info.Alerts)
+	}
+}
+
+func TestGetScoreByPurl_AggregatesWorstCaseAcrossArtifacts(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v0/purl" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusOK, strings.Join([]string{
+			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"sdist","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"wheel","score":{"supplyChain":0.20,"overall":0.40},"alerts":[{"type":"native-code","severity":"medium","category":"quality"},{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+		}, "\n")), nil
+	})
+
+	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
+	if err != nil {
+		t.Fatalf("getScoreByPurl() error = %v", err)
+	}
+	if info.Score.SupplyChain != 20 || info.Score.Overall != 40 {
+		t.Fatalf("score = %+v, want supply=20 overall=40", info.Score)
+	}
+	if len(info.Alerts) != 2 {
+		t.Fatalf("alerts = %#v, want 2 deduped alerts", info.Alerts)
+	}
+}
+
+func TestGetScoreByPurl_MissingArtifactReturnsUnsupportedSource(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v0/purl" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusOK, `{"_type":"purlError","message":"not found"}`), nil
+	})
+
+	_, err := prov.getScoreByPurl(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")
+	if !errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatalf("getScoreByPurl() error = %v, want ErrUnsupportedSource", err)
+	}
+}
+
+func TestGetPackageScorePyPI_UsesPurl(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodPost || req.URL.Path != "/v0/purl" {
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81}}`), nil
+	})
+
+	info, err := prov.GetPackageScore(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
+	if err != nil {
+		t.Fatalf("GetPackageScore() error = %v", err)
+	}
+	if info.Score.Overall != 81 {
+		t.Fatalf("Overall = %v, want 81", info.Score.Overall)
+	}
+}
+
+func TestGetPackageScorePyPI_PurlScopeError(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		return newHTTPResponse(http.StatusForbidden, "missing scope packages:list"), nil
+	})
+
+	_, err := prov.GetPackageScore(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
+	if err == nil || !strings.Contains(err.Error(), "packages:list") {
+		t.Fatalf("GetPackageScore() error = %v, want packages:list scope hint", err)
+	}
+}
+
+func TestListVersionsPyPI_UsesBatchPurlAndCapsCandidates(t *testing.T) {
+	var postCalls int
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			var releases strings.Builder
+			releases.WriteString(`{"releases":{`)
+			for i := 0; i < 12; i++ {
+				if i > 0 {
+					releases.WriteByte(',')
+				}
+				fmt.Fprintf(&releases, `"1.0.%d":[{"upload_time_iso_8601":"2024-01-%02dT00:00:00Z"}]`, i, i+1)
+			}
+			releases.WriteString(`}}`)
+			return newHTTPResponse(http.StatusOK, releases.String()), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			postCalls++
+			var payload purlRequest
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+			if len(payload.Components) != maxCandidates {
+				t.Fatalf("len(components) = %d, want %d", len(payload.Components), maxCandidates)
+			}
+
+			lines := make([]string, 0, len(payload.Components))
+			for _, component := range payload.Components {
+				version := strings.TrimPrefix(component.PURL, "pkg:pypi/demo@")
+				lines = append(lines, fmt.Sprintf(`{"inputPurl":"%s","version":"%s","score":{"supplyChain":0.9,"overall":0.8}}`, component.PURL, version))
+			}
+			return newHTTPResponse(http.StatusOK, strings.Join(lines, "\n")), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	versions, err := prov.ListVersions(context.Background(), api.EcosystemPyPI, "demo")
+	if err != nil {
+		t.Fatalf("ListVersions() error = %v", err)
+	}
+	if len(versions) != maxCandidates {
+		t.Fatalf("len(versions) = %d, want %d", len(versions), maxCandidates)
+	}
+	if postCalls != 1 {
+		t.Fatalf("post calls = %d, want 1", postCalls)
+	}
+}
+
+func TestBatchScoreByPurl_MissingVersionReturnsUnsupportedSource(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v0/purl" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:cargo/serde@1.0.200","version":"1.0.200","score":{"supplyChain":0.9,"overall":0.8}}`), nil
+	})
+
+	_, err := prov.batchScoreByPurl(context.Background(), api.EcosystemCargo, "serde", []orderedVersion{
+		{Version: "1.0.200"},
+		{Version: "1.0.201"},
+	})
+	if !errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatalf("batchScoreByPurl() error = %v, want ErrUnsupportedSource", err)
+	}
+}
+
+func TestGetPackageScoreGo_TreatsMissingPurlResultAsUnsupportedSource(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v0/purl" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusOK, `{"_type":"summary"}`), nil
 	})
 
 	_, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")

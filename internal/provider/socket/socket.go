@@ -2,6 +2,8 @@
 package socket
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -86,6 +88,17 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 		return nil, provider.ErrUnsupportedSource
 	}
 
+	switch ecosystem {
+	case api.EcosystemNPM, api.EcosystemPNPM:
+		return p.getScoreBySocketEndpoint(ctx, ecosystem, name, version)
+	case api.EcosystemPyPI, api.EcosystemGo, api.EcosystemCargo:
+		return p.getScoreByPurl(ctx, ecosystem, name, version)
+	default:
+		return nil, fmt.Errorf("unsupported ecosystem %q", ecosystem)
+	}
+}
+
+func (p *Provider) getScoreBySocketEndpoint(ctx context.Context, ecosystem api.Ecosystem, name, version string) (*api.VersionInfo, error) {
 	eco := socketEcosystem(ecosystem)
 	url := fmt.Sprintf("%s/%s/%s/%s/score", baseURL, eco, name, version)
 
@@ -130,6 +143,34 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 	return info, nil
 }
 
+func (p *Provider) getScoreByPurl(ctx context.Context, ecosystem api.Ecosystem, name, version string) (*api.VersionInfo, error) {
+	// Socket's /v0/purl endpoint is a temporary compatibility shim for
+	// non-npm ecosystems. Keep the request/parse logic isolated so it can be
+	// swapped out when Socket ships a replacement scoring endpoint.
+	purl, err := buildPurl(ecosystem, name, version)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := p.doPost(ctx, fmt.Sprintf("%s/purl", baseURL), purlRequest{
+		Components: []purlComponent{{PURL: purl}},
+	})
+	if err != nil {
+		return nil, wrapPurlRequestError(fmt.Sprintf("fetching purl score for %s@%s", name, version), err)
+	}
+
+	infos, err := parsePurlResponse(body, map[string]string{purl: version})
+	if err != nil {
+		return nil, fmt.Errorf("parsing purl score response for %s@%s: %w", name, version, err)
+	}
+
+	info, ok := infos[version]
+	if !ok {
+		return nil, provider.ErrUnsupportedSource
+	}
+	return info, nil
+}
+
 // maxCandidates is the number of recent versions to score via the Socket API.
 const maxCandidates = 10
 
@@ -148,6 +189,27 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 	limit := maxCandidates
 	if len(ordered) < limit {
 		limit = len(ordered)
+	}
+
+	if ecosystem != api.EcosystemNPM && ecosystem != api.EcosystemPNPM {
+		scored, err := p.batchScoreByPurl(ctx, ecosystem, name, ordered[:limit])
+		if err != nil {
+			return nil, err
+		}
+
+		versions := make([]api.VersionInfo, 0, limit)
+		for _, entry := range ordered[:limit] {
+			info, ok := scored[entry.Version]
+			if !ok {
+				return nil, provider.ErrUnsupportedSource
+			}
+			if info.PublishedAt.IsZero() && !entry.PublishedAt.IsZero() {
+				info.PublishedAt = entry.PublishedAt
+			}
+			info.Deprecated = entry.Deprecated
+			versions = append(versions, *info)
+		}
+		return versions, nil
 	}
 
 	eco := socketEcosystem(ecosystem)
@@ -178,6 +240,41 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 	}
 
 	return versions, nil
+}
+
+func (p *Provider) batchScoreByPurl(ctx context.Context, ecosystem api.Ecosystem, name string, versions []orderedVersion) (map[string]*api.VersionInfo, error) {
+	if len(versions) == 0 {
+		return map[string]*api.VersionInfo{}, nil
+	}
+
+	components := make([]purlComponent, 0, len(versions))
+	requested := make(map[string]string, len(versions))
+	for _, version := range versions {
+		purl, err := buildPurl(ecosystem, name, version.Version)
+		if err != nil {
+			return nil, err
+		}
+		components = append(components, purlComponent{PURL: purl})
+		requested[purl] = version.Version
+	}
+
+	body, err := p.doPost(ctx, fmt.Sprintf("%s/purl", baseURL), purlRequest{Components: components})
+	if err != nil {
+		return nil, wrapPurlRequestError(fmt.Sprintf("fetching purl scores for %s", name), err)
+	}
+
+	infos, err := parsePurlResponse(body, requested)
+	if err != nil {
+		return nil, fmt.Errorf("parsing purl batch response for %s: %w", name, err)
+	}
+
+	for _, version := range versions {
+		if _, ok := infos[version.Version]; !ok {
+			return nil, provider.ErrUnsupportedSource
+		}
+	}
+
+	return infos, nil
 }
 
 func (p *Provider) listOrderedVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]orderedVersion, error) {
@@ -384,6 +481,38 @@ func (p *Provider) doGet(ctx context.Context, url string) ([]byte, error) {
 	return body, nil
 }
 
+func (p *Provider) doPost(ctx context.Context, url string, payload any) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.apiToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/x-ndjson, application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &httpStatusError{statusCode: resp.StatusCode, body: string(respBody)}
+	}
+
+	return respBody, nil
+}
+
 func socketEcosystem(eco api.Ecosystem) string {
 	switch eco {
 	case api.EcosystemNPM, api.EcosystemPNPM:
@@ -394,6 +523,19 @@ func socketEcosystem(eco api.Ecosystem) string {
 		return "go"
 	case api.EcosystemCargo:
 		return "crates"
+	default:
+		return string(eco)
+	}
+}
+
+func purlEcosystem(eco api.Ecosystem) string {
+	switch eco {
+	case api.EcosystemPyPI:
+		return "pypi"
+	case api.EcosystemGo:
+		return "golang"
+	case api.EcosystemCargo:
+		return "cargo"
 	default:
 		return string(eco)
 	}
@@ -425,6 +567,43 @@ type scoreResponse struct {
 type issueEntry struct {
 	Severity string `json:"severity"`
 	Title    string `json:"title"`
+	Category string `json:"category"`
+}
+
+type purlRequest struct {
+	Components []purlComponent `json:"components"`
+}
+
+type purlComponent struct {
+	PURL string `json:"purl"`
+}
+
+type purlLineType struct {
+	Type string `json:"_type"`
+}
+
+type purlArtifact struct {
+	Type      string      `json:"type"`
+	Name      string      `json:"name"`
+	Version   string      `json:"version"`
+	Release   string      `json:"release"`
+	Score     purlScore   `json:"score"`
+	Alerts    []purlAlert `json:"alerts"`
+	InputPurl string      `json:"inputPurl"`
+}
+
+type purlScore struct {
+	SupplyChain   float64 `json:"supplyChain"`
+	Overall       float64 `json:"overall"`
+	Quality       float64 `json:"quality"`
+	Maintenance   float64 `json:"maintenance"`
+	Vulnerability float64 `json:"vulnerability"`
+	License       float64 `json:"license"`
+}
+
+type purlAlert struct {
+	Type     string `json:"type"`
+	Severity string `json:"severity"`
 	Category string `json:"category"`
 }
 
@@ -567,6 +746,112 @@ func orderedPyPIReleases(releases map[string][]pypiFileInfo) []orderedVersion {
 	}
 
 	return orderPyPIVersions(ordered)
+}
+
+func buildPurl(ecosystem api.Ecosystem, name, version string) (string, error) {
+	eco := purlEcosystem(ecosystem)
+	if eco == string(ecosystem) && ecosystem != api.EcosystemPyPI && ecosystem != api.EcosystemGo && ecosystem != api.EcosystemCargo {
+		return "", fmt.Errorf("unsupported purl ecosystem %q", ecosystem)
+	}
+	return fmt.Sprintf("pkg:%s/%s@%s", eco, name, version), nil
+}
+
+func wrapPurlRequestError(action string, err error) error {
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && (statusErr.statusCode == http.StatusUnauthorized || statusErr.statusCode == http.StatusForbidden) {
+		return fmt.Errorf("%s: Socket /v0/purl requires a token with packages:list scope: %w", action, err)
+	}
+	return fmt.Errorf("%s: %w", action, err)
+}
+
+func parsePurlResponse(body []byte, requestedByPurl map[string]string) (map[string]*api.VersionInfo, error) {
+	aggregated := make(map[string]*api.VersionInfo, len(requestedByPurl))
+	seenAlerts := make(map[string]map[string]struct{}, len(requestedByPurl))
+
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+
+		var meta purlLineType
+		if err := json.Unmarshal(line, &meta); err != nil {
+			return nil, err
+		}
+		if meta.Type == "summary" || meta.Type == "purlError" {
+			continue
+		}
+
+		var artifact purlArtifact
+		if err := json.Unmarshal(line, &artifact); err != nil {
+			return nil, err
+		}
+
+		version, ok := purlArtifactVersion(artifact, requestedByPurl)
+		if !ok {
+			continue
+		}
+
+		info := aggregated[version]
+		if info == nil {
+			info = &api.VersionInfo{
+				Version: version,
+				Score: api.PackageScore{
+					SupplyChain: artifact.Score.SupplyChain * 100,
+					Overall:     artifact.Score.Overall * 100,
+				},
+			}
+			aggregated[version] = info
+			seenAlerts[version] = make(map[string]struct{})
+		} else {
+			info.Score.SupplyChain = minFloat(info.Score.SupplyChain, artifact.Score.SupplyChain*100)
+			info.Score.Overall = minFloat(info.Score.Overall, artifact.Score.Overall*100)
+		}
+
+		for _, alert := range artifact.Alerts {
+			key := strings.Join([]string{alert.Type, alert.Severity, alert.Category}, "|")
+			if _, ok := seenAlerts[version][key]; ok {
+				continue
+			}
+			seenAlerts[version][key] = struct{}{}
+			info.Alerts = append(info.Alerts, api.PackageAlert{
+				Severity: alert.Severity,
+				Title:    alert.Type,
+				Category: alert.Category,
+			})
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return aggregated, nil
+}
+
+func purlArtifactVersion(artifact purlArtifact, requestedByPurl map[string]string) (string, bool) {
+	if artifact.InputPurl != "" {
+		version, ok := requestedByPurl[artifact.InputPurl]
+		return version, ok
+	}
+	if artifact.Version == "" {
+		return "", false
+	}
+	for _, requestedVersion := range requestedByPurl {
+		if artifact.Version == requestedVersion {
+			return artifact.Version, true
+		}
+	}
+	return "", false
+}
+
+func minFloat(left, right float64) float64 {
+	if right < left {
+		return right
+	}
+	return left
 }
 
 func goModuleUsesPublicSources(module string) bool {
