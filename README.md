@@ -26,25 +26,28 @@ Most security tools just say "no." attach-guard says "no, but here's a safe alte
 When a risky version is blocked, attach-guard doesn't stop the developer — it finds the newest version that passes policy and offers it as a replacement:
 
 ```
-> npm install new-pkg
+> npm install axios
 
 attach-guard evaluates:
-  new-pkg@2.0.0  -->  FAIL (published 1 hour ago, minimum age is 48 hours)
-  new-pkg@1.9.0  -->  PASS (30 days old, supply chain score 92)
+  axios@1.14.1  -->  DENY (supply chain score 40, below threshold 50 — compromised version)
+  axios@1.14.0  -->  ALLOW (supply chain score 71, passes all policy checks)
 
 Result: ASK + rewritten command
-  "npm install new-pkg@1.9.0"
+  "npm install axios@1.14.0"
 ```
+
+This is a real example — axios v1.14.1 and v0.30.4 were [compromised versions](https://socket.dev/blog/axios-npm-account-compromise) published via a hijacked maintainer account. attach-guard blocks them automatically based on their low supply chain scores.
 
 In Claude Code, this means Claude sees the safe alternative and can proceed immediately. The developer flow doesn't stop — it gets redirected to a safe path.
 
-| Scenario | Decision | What happens |
-|---|---|---|
-| Package is safe | **Allow** | Install proceeds normally |
-| Latest is risky, older version is safe | **Ask + rewrite** | Claude shows safe alternative, user confirms |
-| All versions fail (malware, all too new, etc.) | **Deny** | Blocked with clear explanation |
+| Scenario | Example | Decision | What happens |
+|---|---|---|---|
+| Package is safe | `npm install axios@1.14.0` | **Allow** | Install proceeds normally |
+| Pinned to compromised version | `npm install axios@1.14.1` | **Deny** | Blocked — supply chain score 40 |
+| Unpinned, latest is risky | `npm install axios` | **Ask + rewrite** | Safe alternative offered: `axios@1.14.0` |
+| All versions fail | malware-only package | **Deny** | Blocked with clear explanation |
 
-Your flow only fully stops when there is genuinely no safe version to offer. In the common case — a package that's just too new or has a recent score drop — you get a one-click safe alternative.
+Your flow only fully stops when there is genuinely no safe version to offer.
 
 ## Why a Hook, Not a Skill or MCP
 
@@ -178,16 +181,23 @@ For global protection across all projects, add it to `~/.claude/settings.json` i
 
 #### Step 5: Verify
 
-Ask Claude Code to install a package. You should see attach-guard intercept the command:
+Try installing a known-compromised version to verify attach-guard blocks it:
 
 ```
-> Install axios for me
+> Install axios@1.14.1
+
+Claude: I'll install axios@1.14.1.
+[attach-guard] deny: axios@1.14.1: supply chain score 40 is below minimum threshold 50
+```
+
+Then try a safe version:
+
+```
+> Install axios
 
 Claude: I'll install axios.
 [attach-guard] allow: package passes all policy checks
 ```
-
-If the package is risky, Claude will be blocked or asked to confirm.
 
 ## How It Works
 
@@ -215,8 +225,13 @@ attach-guard help                  Show help
 ### Examples
 
 ```bash
-# Evaluate a command directly
+# Evaluate a safe package
 attach-guard evaluate npm install axios
+# --> allow: package passes all policy checks
+
+# Evaluate a compromised version
+attach-guard evaluate npm install axios@1.14.1
+# --> deny: supply chain score 40 is below minimum threshold 50
 
 # Use as a Claude Code hook (reads JSON from stdin)
 attach-guard hook
@@ -282,9 +297,9 @@ Highest priority wins (later sources override earlier):
 ### Unpinned version handling
 
 When you run `npm install axios` (no version pin):
-- attach-guard fetches candidate versions
+- attach-guard fetches candidate versions from the npm registry and scores them via Socket.dev
 - If the latest passes policy, the command runs as-is
-- If the latest fails but an older version passes, attach-guard suggests a rewrite: `npm install axios@1.6.8`
+- If the latest fails but an older version passes, attach-guard suggests a rewrite: `npm install axios@1.14.0`
 - In Claude Code mode: returns `ask` with the rewritten command via `updatedInput`
 - If no version passes, denies
 
@@ -304,10 +319,10 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
   "user": "dev",
   "cwd": "/home/dev/project",
   "package_manager": "npm",
-  "original_command": "npm install axios",
-  "decision": "allow",
-  "reason": "package passes all policy checks",
-  "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.7.0","score":{"supply_chain":92,"overall":88}}],
+  "original_command": "npm install axios@1.14.1",
+  "decision": "deny",
+  "reason": "axios@1.14.1: supply chain score 40 is below minimum threshold 50",
+  "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.14.1","score":{"supply_chain":40,"overall":40}}],
   "provider": "socket",
   "mode": "claude"
 }
