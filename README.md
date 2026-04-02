@@ -4,7 +4,7 @@ Hard-enforcement dependency install guard for AI coding agents and developers.
 
 ## The Problem
 
-AI coding agents and developers install packages before anyone reviews them. Existing tools scan after the fact or rely on advisory prompts. There is no open-source, local-first guardrail that sits directly in front of `npm install` and blocks risky packages before they execute.
+AI coding agents and developers install packages before anyone reviews them. Existing tools scan after the fact or rely on advisory prompts. There is no open-source, local-first guardrail that sits directly in front of package install commands and blocks risky packages before they execute.
 
 ## What attach-guard Does
 
@@ -25,6 +25,8 @@ Most security tools just say "no." attach-guard says "no, but here's a safe alte
 
 When a risky version is blocked, attach-guard doesn't stop the developer — it finds the newest version that passes policy and offers it as a replacement:
 
+**npm** — axios v1.14.1 and v0.30.4 were [compromised versions](https://socket.dev/blog/axios-npm-account-compromise) published via a hijacked maintainer account:
+
 ```
 > npm install axios
 
@@ -36,16 +38,38 @@ Result: ASK + rewritten command
   "npm install axios@1.14.0"
 ```
 
-This is a real example — axios v1.14.1 and v0.30.4 were [compromised versions](https://socket.dev/blog/axios-npm-account-compromise) published via a hijacked maintainer account. attach-guard blocks them automatically based on their low supply chain scores.
+**pip** — litellm v1.82.7 and v1.82.8 were [malicious versions](https://socket.dev/npm/package/litellm) published to PyPI:
+
+```
+> pip install litellm
+
+attach-guard evaluates:
+  litellm==1.82.8  -->  DENY (compromised version)
+  litellm==1.82.6  -->  ALLOW (passes all policy checks)
+
+Result: ASK + rewritten command
+  "pip install litellm==1.82.6"
+```
+
+These are real examples — attach-guard blocks compromised versions automatically based on their supply chain scores.
 
 In Claude Code, this means Claude sees the safe alternative and can proceed immediately. The developer flow doesn't stop — it gets redirected to a safe path.
 
 | Scenario | Example | Decision | What happens |
 |---|---|---|---|
 | Package is safe | `npm install axios@1.14.0` | **Allow** | Install proceeds normally |
-| Pinned to compromised version | `npm install axios@1.14.1` | **Deny** | Blocked — supply chain score 40 |
+| Pinned to compromised version | `pip install litellm==1.82.8` | **Deny** | Blocked — compromised version |
 | Unpinned, latest is risky | `npm install axios` | **Ask + rewrite** | Safe alternative offered: `axios@1.14.0` |
 | All versions fail | malware-only package | **Deny** | Blocked with clear explanation |
+
+This works across all supported ecosystems — the rewrite uses the native pinning syntax for each:
+
+| Ecosystem | Unpinned command | Rewritten command |
+|---|---|---|
+| npm / pnpm | `npm install axios` | `npm install axios@1.14.0` |
+| pip | `pip install litellm` | `pip install litellm==1.82.6` |
+| Go | `go get golang.org/x/net` | `go get golang.org/x/net@v0.25.0` |
+| Cargo | `cargo add serde` | `cargo add serde@=1.0.200` |
 
 Your flow only fully stops when there is genuinely no safe version to offer.
 
@@ -203,7 +227,7 @@ Claude: I'll install axios.
 
 ## How It Works
 
-When Claude calls the Bash tool with a command like `npm install axios`:
+When Claude calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
 
 1. Claude Code fires the PreToolUse hook before execution
 2. The hook pipes the tool input JSON to `attach-guard hook` via stdin
@@ -227,13 +251,21 @@ attach-guard help                  Show help
 ### Examples
 
 ```bash
-# Evaluate a safe package
+# npm
 attach-guard evaluate npm install axios
-# --> allow: package passes all policy checks
-
-# Evaluate a compromised version
 attach-guard evaluate npm install axios@1.14.1
-# --> deny: supply chain score 40 is below minimum threshold 50
+
+# pip
+attach-guard evaluate pip install litellm
+attach-guard evaluate pip install litellm==1.82.8
+
+# Go
+attach-guard evaluate go get golang.org/x/net
+attach-guard evaluate go get golang.org/x/net@v0.25.0
+
+# Cargo
+attach-guard evaluate cargo add serde
+attach-guard evaluate cargo add serde@=1.0.200
 
 # Use as a Claude Code hook (reads JSON from stdin)
 attach-guard hook
@@ -264,6 +296,9 @@ policy:
 package_managers:
   npm: true
   pnpm: true
+  pip: true
+  go: true
+  cargo: true
 logging:
   path: "~/.attach-guard/audit.jsonl"
 ```
