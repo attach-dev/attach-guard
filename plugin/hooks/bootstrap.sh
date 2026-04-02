@@ -152,7 +152,7 @@ fi
 
 # Require a Socket API token — without it, every lookup returns "provider unavailable"
 if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
-  fatal_error "Socket API token not configured. Run: claude plugin config set attach-guard@attach-dev socket_api_token <your-token>  (get a free token at https://socket.dev)"
+  fatal_error "Socket API token not configured. To set it, run: claude plugin disable attach-guard@attach-dev && claude plugin enable attach-guard@attach-dev  — this will prompt for your token (stored in system keychain). Or: export SOCKET_API_TOKEN=<token> in your shell profile. Get a free token at https://socket.dev"
 fi
 
 exec "$BINARY" "$@"

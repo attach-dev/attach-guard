@@ -63,10 +63,8 @@ A security guardrail must be a hook because enforcement requires interception at
 The fastest way to try attach-guard. Requires a [Socket.dev](https://socket.dev) API token (free tier available).
 
 ```bash
-# Add the marketplace (one-time)
+# Add the marketplace and install (one-time)
 claude plugin marketplace add attach-dev/attach-guard
-
-# Install the plugin
 claude plugin install attach-guard@attach-dev
 ```
 
@@ -76,7 +74,15 @@ Or from within a Claude Code session:
 /plugin install attach-guard@attach-dev
 ```
 
-Claude will prompt for your Socket API token on first use (stored securely in your system keychain). The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no manual setup needed.
+During installation, Claude Code will prompt for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev).
+
+> **If the token prompt didn't appear**, re-trigger it with:
+> ```bash
+> claude plugin disable attach-guard@attach-dev && claude plugin enable attach-guard@attach-dev
+> ```
+> Or set the token as an environment variable: `export SOCKET_API_TOKEN="your-token"` in your shell profile.
+
+The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no further setup needed.
 
 Once running, the plugin provides:
 - **Automatic enforcement** — every `npm install` / `pnpm add` is intercepted and checked
