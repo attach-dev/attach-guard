@@ -82,7 +82,8 @@ if [[ ! -x "$BINARY" ]]; then
   elif [[ -d "$GO_MAIN" ]] && command -v go &>/dev/null; then
     echo "attach-guard: binary not found, building from source..." >&2
     mkdir -p "${PLUGIN_ROOT}/hooks/bin"
-    if GOOS="$OS" GOARCH="$ARCH" go build -ldflags="-s -w" -o "$BINARY" "$GO_MAIN"; then
+    MODULE_ROOT="${PLUGIN_ROOT}/.."
+    if (cd "$MODULE_ROOT" && GOOS="$OS" GOARCH="$ARCH" go build -ldflags="-s -w" -o "$BINARY" ./cmd/attach-guard); then
       echo "attach-guard: built $BINARY" >&2
     else
       fatal_error "failed to build from source. Run 'make plugin-build' to fix."
