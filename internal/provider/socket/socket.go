@@ -244,6 +244,9 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 	for _, version := range strings.Fields(string(body)) {
 		candidates = append(candidates, orderedVersion{Version: version})
 	}
+	// The list response does not include timestamps, so we pre-cap using
+	// semver-aware ordering on the raw version strings. PublishedAt is only
+	// populated after the per-version .info fetches below.
 	candidates = orderGoVersions(candidates)
 	if len(candidates) > maxCandidates {
 		candidates = candidates[:maxCandidates]
