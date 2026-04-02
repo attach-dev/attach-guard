@@ -3,6 +3,7 @@ package versionselect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/attach-dev/attach-guard/internal/config"
@@ -13,11 +14,12 @@ import (
 
 // Result holds the version selection outcome.
 type Result struct {
-	Selected     *api.VersionInfo
-	WasRewritten bool
-	AllFailed    bool
-	Decision     api.Decision // the policy decision for the selected version
-	Reason       string       // the policy reason for the selected version
+	Selected          *api.VersionInfo
+	WasRewritten      bool
+	AllFailed         bool
+	UnsupportedSource bool
+	Decision          api.Decision // the policy decision for the selected version
+	Reason            string       // the policy reason for the selected version
 }
 
 // Selector picks the best acceptable version for an unpinned package.
@@ -38,6 +40,13 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 	if pkg.Pinned {
 		info, err := s.prov.GetPackageScore(ctx, pkg.Ecosystem, pkg.Name, pkg.Version)
 		if err != nil {
+			if errors.Is(err, provider.ErrUnsupportedSource) {
+				return &Result{
+					UnsupportedSource: true,
+					Decision:          api.Allow,
+					Reason:            "package source is not supported for public-registry evaluation",
+				}, nil
+			}
 			// Version not found or provider error — deny for safety
 			return &Result{
 				AllFailed: true,
@@ -64,6 +73,13 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 	// Unpinned: fetch candidate versions
 	versions, err := s.prov.ListVersions(ctx, pkg.Ecosystem, pkg.Name)
 	if err != nil {
+		if errors.Is(err, provider.ErrUnsupportedSource) {
+			return &Result{
+				UnsupportedSource: true,
+				Decision:          api.Allow,
+				Reason:            "package source is not supported for public-registry evaluation",
+			}, nil
+		}
 		return nil, fmt.Errorf("listing versions for %s: %w", pkg.Name, err)
 	}
 

@@ -80,3 +80,53 @@ func TestOrderCargoVersionsPrefersStableSemver(t *testing.T) {
 		t.Fatalf("ordered versions = %#v, want [1.0.0 0.9.9]", ordered)
 	}
 }
+
+func TestOrderedPyPIReleasesSkipsDeletedVersions(t *testing.T) {
+	now := time.Now()
+	ordered := orderedPyPIReleases(map[string][]pypiFileInfo{
+		"1.0.0": {},
+		"0.9.0": {
+			{UploadTimeISO8601: now.Add(-time.Hour).Format(time.RFC3339)},
+		},
+	})
+
+	if len(ordered) != 1 {
+		t.Fatalf("len(ordered) = %d, want 1", len(ordered))
+	}
+	if ordered[0].Version != "0.9.0" {
+		t.Fatalf("ordered version = %q, want 0.9.0", ordered[0].Version)
+	}
+}
+
+func TestGoModuleUsesPublicSources_DefaultProxy(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	if !goModuleUsesPublicSources("golang.org/x/net") {
+		t.Fatal("expected public go module to use public sources")
+	}
+}
+
+func TestGoModuleUsesPublicSources_PrivatePattern(t *testing.T) {
+	t.Setenv("GOPRIVATE", "private.example.com,*.corp.example.com")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	if goModuleUsesPublicSources("private.example.com/team/module") {
+		t.Fatal("expected GOPRIVATE module to bypass public sources")
+	}
+	if goModuleUsesPublicSources("api.corp.example.com/team/module") {
+		t.Fatal("expected glob-matched GOPRIVATE module to bypass public sources")
+	}
+}
+
+func TestGoModuleUsesPublicSources_CustomProxy(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.corp.example.com,https://proxy.golang.org,direct")
+
+	if goModuleUsesPublicSources("golang.org/x/net") {
+		t.Fatal("expected custom GOPROXY to disable public-source evaluation")
+	}
+}

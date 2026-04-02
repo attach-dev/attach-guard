@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/attach-dev/attach-guard/internal/provider"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
@@ -67,6 +69,10 @@ func (p *Provider) IsAvailable(ctx context.Context) bool {
 
 // GetPackageScore fetches score data for a specific package version from Socket.
 func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem, name, version string) (*api.VersionInfo, error) {
+	if ecosystem == api.EcosystemGo && !goModuleUsesPublicSources(name) {
+		return nil, provider.ErrUnsupportedSource
+	}
+
 	eco := socketEcosystem(ecosystem)
 	url := fmt.Sprintf("%s/%s/%s/%s/score", baseURL, eco, name, version)
 
@@ -196,29 +202,14 @@ func (p *Provider) listOrderedVersionsPyPI(ctx context.Context, name string) ([]
 		return nil, fmt.Errorf("parsing pypi response for %s: %w", name, err)
 	}
 
-	var ordered []orderedVersion
-	for version, files := range reg.Releases {
-		var publishedAt time.Time
-		deprecated := len(files) > 0
-		for _, file := range files {
-			if ts, err := time.Parse(time.RFC3339, file.UploadTimeISO8601); err == nil && ts.After(publishedAt) {
-				publishedAt = ts
-			}
-			if !file.Yanked {
-				deprecated = false
-			}
-		}
-		ordered = append(ordered, orderedVersion{
-			Version:     version,
-			PublishedAt: publishedAt,
-			Deprecated:  deprecated,
-		})
-	}
-
-	return orderPyPIVersions(ordered), nil
+	return orderedPyPIReleases(reg.Releases), nil
 }
 
 func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]orderedVersion, error) {
+	if !goModuleUsesPublicSources(name) {
+		return nil, provider.ErrUnsupportedSource
+	}
+
 	escaped := escapeModulePath(name)
 	registryURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/list", escaped)
 	body, err := p.doGetPublic(ctx, registryURL)
@@ -487,6 +478,93 @@ func (r *npmRegistryResponse) orderedVersions() []orderedVersion {
 		result[i] = orderedVersion{Version: e.version, PublishedAt: e.publishedAt, Deprecated: e.deprecated}
 	}
 	return result
+}
+
+func orderedPyPIReleases(releases map[string][]pypiFileInfo) []orderedVersion {
+	var ordered []orderedVersion
+	for version, files := range releases {
+		if len(files) == 0 {
+			continue
+		}
+
+		var publishedAt time.Time
+		deprecated := true
+		for _, file := range files {
+			if ts, err := time.Parse(time.RFC3339, file.UploadTimeISO8601); err == nil && ts.After(publishedAt) {
+				publishedAt = ts
+			}
+			if !file.Yanked {
+				deprecated = false
+			}
+		}
+		ordered = append(ordered, orderedVersion{
+			Version:     version,
+			PublishedAt: publishedAt,
+			Deprecated:  deprecated,
+		})
+	}
+
+	return orderPyPIVersions(ordered)
+}
+
+func goModuleUsesPublicSources(module string) bool {
+	if matchesGoModulePatternList(os.Getenv("GOPRIVATE"), module) {
+		return false
+	}
+	if matchesGoModulePatternList(os.Getenv("GONOPROXY"), module) {
+		return false
+	}
+	return goProxyUsesPublicRegistry(os.Getenv("GOPROXY"))
+}
+
+func goProxyUsesPublicRegistry(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+
+	for _, entry := range splitGoProxyEntries(raw) {
+		switch entry {
+		case "", "direct", "off":
+			return false
+		case "https://proxy.golang.org", "https://proxy.golang.org/", "http://proxy.golang.org", "http://proxy.golang.org/":
+			return true
+		default:
+			return false
+		}
+	}
+
+	return false
+}
+
+func splitGoProxyEntries(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '|'
+	})
+}
+
+func matchesGoModulePatternList(raw, module string) bool {
+	for _, pattern := range strings.Split(raw, ",") {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		for _, prefix := range goModulePrefixes(module) {
+			matched, err := path.Match(pattern, prefix)
+			if err == nil && matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func goModulePrefixes(module string) []string {
+	parts := strings.Split(module, "/")
+	prefixes := make([]string, 0, len(parts))
+	for i := range parts {
+		prefixes = append(prefixes, strings.Join(parts[:i+1], "/"))
+	}
+	return prefixes
 }
 
 func orderPyPIVersions(versions []orderedVersion) []orderedVersion {

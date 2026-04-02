@@ -393,9 +393,12 @@ func TestEvaluate_RecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		"pip install https://github.com/user/repo/archive/main.tar.gz",
 		"pip install requests>=2.0",
 		"pip install requests[security]",
+		"pip install requests --index-url https://custom.pypi.org/simple",
+		"pip install requests --extra-index-url https://custom.pypi.org/simple",
 		"go get ./...",
 		"cargo add --git https://github.com/user/repo",
 		"cargo add --path ./local-crate",
+		"cargo add serde --registry internal",
 		"cargo add serde@1.0.200",
 		"python -m pip install requests",
 	}
@@ -411,6 +414,51 @@ func TestEvaluate_RecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		}
 		if result.RewrittenCommand != "" {
 			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_UnsupportedGoSourcesAllowPassthrough(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	tests := []struct {
+		name    string
+		command string
+		setup   func(*provider.MockProvider)
+	}{
+		{
+			name:    "unpinned private module",
+			command: "go get private.example.com/module",
+			setup: func(mock *provider.MockProvider) {
+				mock.VersionsErr = provider.ErrUnsupportedSource
+			},
+		},
+		{
+			name:    "pinned private module",
+			command: "go get private.example.com/module@v1.2.3",
+			setup: func(mock *provider.MockProvider) {
+				mock.ScoreErr = provider.ErrUnsupportedSource
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		mock := provider.NewMockProvider()
+		tt.setup(mock)
+		eval := NewEvaluator(cfg, mock)
+
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("%s: Evaluate(%q) returned error: %v", tt.name, tt.command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("%s: expected Allow, got %s: %s", tt.name, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Fatalf("%s: expected no rewrite, got %q", tt.name, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "not supported for public-registry evaluation") {
+			t.Fatalf("%s: expected unsupported-source reason, got %q", tt.name, result.Reason)
 		}
 	}
 }
@@ -446,35 +494,6 @@ func TestEvaluate_MixedParsedAndUnparsedArgsForceAsk(t *testing.T) {
 		if !strings.Contains(result.Reason, "could not be evaluated") {
 			t.Errorf("expected manual review reason for %q, got %q", cmd, result.Reason)
 		}
-	}
-}
-
-func TestEvaluate_PipIndexConfigurationDoesNotForceAsk(t *testing.T) {
-	cfg := config.DefaultConfig()
-	cfg.Policy.AutoRewriteUnpinned.Local = true
-	mock := provider.NewMockProvider()
-
-	mock.AddVersion("requests", api.VersionInfo{
-		Version:     "2.32.0",
-		PublishedAt: time.Now().Add(-1 * time.Hour),
-		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
-	})
-	mock.AddVersion("requests", api.VersionInfo{
-		Version:     "2.31.0",
-		PublishedAt: time.Now().Add(-240 * time.Hour),
-		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
-	})
-
-	eval := NewEvaluator(cfg, mock)
-	result, err := eval.Evaluate(context.Background(), "pip install requests --index-url https://custom.pypi.org/simple", api.ModeShell)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Decision != api.Allow {
-		t.Fatalf("expected Allow, got %s: %s", result.Decision, result.Reason)
-	}
-	if result.RewrittenCommand != "pip install requests==2.31.0 --index-url https://custom.pypi.org/simple" {
-		t.Fatalf("unexpected rewritten command: %q", result.RewrittenCommand)
 	}
 }
 

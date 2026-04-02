@@ -442,11 +442,12 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 	}{
 		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false},
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true},
-		{"pip index url config", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 1, "requests", "", false, false},
+		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true},
 		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false},
 		{"go deferred local", "go get ./...", "go", 0, "", "", false, true},
 		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false},
 		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true},
+		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true},
 	}
 
 	for _, tt := range tests {

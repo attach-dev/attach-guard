@@ -30,6 +30,14 @@ var flagsWithValue = map[string]bool{
 	"--prefix":          true,
 }
 
+var sourceValueFlags = map[string]bool{
+	"-i":                true,
+	"--index-url":       true,
+	"--extra-index-url": true,
+	"-f":                true,
+	"--find-links":      true,
+}
+
 var unparsedValueFlags = map[string]bool{
 	"-c":            true,
 	"--constraint":  true,
@@ -64,6 +72,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	var preActionFlags []string
 	actionIdx := -1
 	hasUnparsed := false
+	disqualify := false
 
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
@@ -76,6 +85,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
+				if sourceValueFlags[tok] {
+					hasUnparsed = true
+					disqualify = true
+				}
 				continue
 			}
 			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "install") {
@@ -108,6 +121,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
+				if sourceValueFlags[tok] {
+					disqualify = true
+					cmd.HasUnparsedArgs = true
+					cmd.Packages = nil
+				}
 				if unparsedValueFlags[tok] {
 					cmd.HasUnparsedArgs = true
 				}
@@ -118,6 +136,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
 			}
+			continue
+		}
+		if disqualify {
+			cmd.HasUnparsedArgs = true
 			continue
 		}
 		if shouldSkipArg(tok) {

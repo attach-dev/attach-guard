@@ -50,7 +50,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
-				if tok == "--git" || tok == "--path" {
+				if tok == "--git" || tok == "--path" || tok == "--registry" {
 					hasUnparsed = true
 				}
 				continue
@@ -85,7 +85,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
-				if tok == "--git" || tok == "--path" {
+				if tok == "--git" || tok == "--path" || tok == "--registry" {
 					disqualify = true
 					cmd.HasUnparsedArgs = true
 					cmd.Packages = nil
