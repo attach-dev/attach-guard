@@ -60,7 +60,21 @@ A security guardrail must be a hook because enforcement requires interception at
 
 ### Quick Start: Claude Code Plugin
 
-The fastest way to try attach-guard. Requires [Go 1.21+](https://go.dev/dl/) and a [Socket.dev](https://socket.dev) API token (free tier available).
+The fastest way to try attach-guard. Requires a [Socket.dev](https://socket.dev) API token (free tier available).
+
+```bash
+claude plugin install --url https://github.com/attach-dev/attach-guard
+```
+
+Claude will prompt for your Socket API token on first use (stored securely in your system keychain). The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no manual setup needed.
+
+Once running, the plugin provides:
+- **Automatic enforcement** — every `npm install` / `pnpm add` is intercepted and checked
+- **`/explain <package>`** — look up any package's risk score, alerts, and version history
+
+#### Local development (from source)
+
+If you want to develop or modify attach-guard, clone the repo and load the plugin directly. Requires [Go 1.21+](https://go.dev/dl/).
 
 ```bash
 git clone https://github.com/attach-dev/attach-guard.git
@@ -68,14 +82,7 @@ cd attach-guard
 claude --plugin-dir ./plugin
 ```
 
-Claude will prompt for your Socket API token on first use (stored securely in your system keychain). The binary auto-builds from source on the first `/explain` invocation. The hook, config, and skill are all registered automatically — no manual setup needed.
-
-Once running, the plugin provides:
-- **Automatic enforcement** — every `npm install` / `pnpm add` is intercepted and checked
-- **`/explain <package>`** — look up any package's risk score, alerts, and version history
-
-> **Note:** Remote `claude plugin install` is not yet supported because the plugin
-> does not ship prebuilt binaries. This is tracked in the [roadmap](docs/ROADMAP.md).
+The binary auto-builds from source on the first `/explain` invocation.
 
 ### Manual Installation
 
@@ -83,7 +90,7 @@ For use without the plugin system, or to install the binary globally.
 
 #### Prerequisites
 
-- [Go 1.21+](https://go.dev/dl/) (to build from source)
+- [Go 1.21+](https://go.dev/dl/) (to build from source; not needed for the plugin install above)
 - A [Socket.dev](https://socket.dev) API token (free tier available)
 
 #### Step 1: Build and install the binary
