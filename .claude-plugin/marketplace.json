@@ -1,0 +1,17 @@
+{
+  "name": "attach-dev",
+  "owner": {
+    "name": "Attach.dev"
+  },
+  "metadata": {
+    "description": "Supply-chain security plugins for AI coding agents"
+  },
+  "plugins": [
+    {
+      "name": "attach-guard",
+      "source": "./plugin",
+      "description": "Intercepts npm/pnpm install commands and enforces package risk policies before execution.",
+      "version": "0.1.0"
+    }
+  ]
+}
