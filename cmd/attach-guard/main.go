@@ -119,6 +119,23 @@ func cmdHook() {
 		return
 	}
 
+	// Skip evaluation when the command is invoking attach-guard itself
+	// (e.g. the evaluate subcommand via bootstrap.sh or the binary directly).
+	// The hook sees the full bash text and would otherwise block on the
+	// "npm install axios" arguments.
+	if isSelfInvocation(input.ToolInput.Command) {
+		out, err := claude.FormatHookOutput(&api.EvaluationResult{
+			Decision: api.Allow,
+			Reason:   "attach-guard self-invocation",
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
+			os.Exit(exitCodeHookBlock)
+		}
+		fmt.Println(string(out))
+		return
+	}
+
 	mode := api.ModeClaude
 	cfg, prov := loadConfigAndProvider(exitCodeHookBlock)
 	eval := cli.NewEvaluator(cfg, prov)
@@ -158,6 +175,27 @@ func cmdConfig() {
 	}
 
 	fmt.Printf("Default config written to %s\n", path)
+}
+
+// isSelfInvocation returns true when the command text is invoking attach-guard
+// itself (e.g. the evaluate subcommand via bootstrap.sh or the binary directly).
+// We check two things:
+//  1. The command contains "attach-guard" (direct binary invocation).
+//  2. The command references the plugin config directory (bootstrap.sh invocation
+//     from the marketplace plugin copy, whose path contains the org name but not
+//     necessarily "attach-guard").
+func isSelfInvocation(command string) bool {
+	if strings.Contains(command, "attach-guard") {
+		return true
+	}
+	if pluginDir := os.Getenv("ATTACH_GUARD_PLUGIN_CONFIG_DIR"); pluginDir != "" {
+		// pluginDir is <plugin-root>/config — derive the plugin root
+		pluginRoot := strings.TrimSuffix(pluginDir, "/config")
+		if strings.Contains(command, pluginRoot) {
+			return true
+		}
+	}
+	return false
 }
 
 // loadConfigAndProvider loads configuration and creates the appropriate provider.
