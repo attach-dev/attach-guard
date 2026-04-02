@@ -35,24 +35,45 @@ func Parse(rawCommand string) *api.ParsedCommand {
 	return nil
 }
 
+type sourceOverrideContext struct {
+	pipNonLocal bool
+	goNonLocal  bool
+}
+
+func (c sourceOverrideContext) merge(other sourceOverrideContext) sourceOverrideContext {
+	return sourceOverrideContext{
+		pipNonLocal: c.pipNonLocal || other.pipNonLocal,
+		goNonLocal:  c.goNonLocal || other.goNonLocal,
+	}
+}
+
+type unwrapResult struct {
+	tokens []string
+	source sourceOverrideContext
+}
+
 // parseSegmentAll parses every install command reachable from a single command
 // segment. After unwrapping prefixes (which may expand shell -c strings
 // containing operators), it re-splits on shell operators and checks each
 // resulting sub-segment.
 func parseSegmentAll(tokens []string, rawCommand string) []*api.ParsedCommand {
-	unwrapped := unwrapPrefixes(tokens)
-	if len(unwrapped) == 0 {
-		return nil
-	}
-	return parseUnwrappedTokensAll(unwrapped, rawCommand)
+	return parseSegmentAllWithContext(tokens, rawCommand, sourceOverrideContext{})
 }
 
-func parseUnwrappedTokensAll(tokens []string, rawCommand string) []*api.ParsedCommand {
+func parseSegmentAllWithContext(tokens []string, rawCommand string, inherited sourceOverrideContext) []*api.ParsedCommand {
+	unwrapped := unwrapPrefixes(tokens)
+	if len(unwrapped.tokens) == 0 {
+		return nil
+	}
+	return parseUnwrappedTokensAll(unwrapped.tokens, rawCommand, inherited.merge(unwrapped.source))
+}
+
+func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourceOverrideContext) []*api.ParsedCommand {
 	segments := commandSegments(tokens)
 	if len(segments) > 1 {
 		var results []*api.ParsedCommand
 		for _, seg := range segments {
-			results = append(results, parseSegmentAll(seg, rawCommand)...)
+			results = append(results, parseSegmentAllWithContext(seg, rawCommand, inherited)...)
 		}
 		return results
 	}
@@ -67,10 +88,12 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string) []*api.ParsedCo
 		return results
 	}
 	if cmd := pip.Parse(tokens, rawCommand); cmd != nil {
+		applySourceOverrideContext(cmd, inherited)
 		results = append(results, cmd)
 		return results
 	}
 	if cmd := gomod.Parse(tokens, rawCommand); cmd != nil {
+		applySourceOverrideContext(cmd, inherited)
 		results = append(results, cmd)
 		return results
 	}
@@ -92,7 +115,7 @@ func ParseAll(rawCommand string) []*api.ParsedCommand {
 
 	var results []*api.ParsedCommand
 	for _, segment := range commandSegments(tokens) {
-		results = append(results, parseSegmentAll(segment, rawCommand)...)
+		results = append(results, parseSegmentAllWithContext(segment, rawCommand, sourceOverrideContext{})...)
 	}
 	return results
 }
@@ -358,21 +381,22 @@ var transparentWrappers = map[string]bool{
 // unwrapPrefixes strips common command prefixes like sudo, env, command, time,
 // nice, npx, and environment variable assignments (KEY=val) so the underlying
 // package manager command is visible to the parsers.
-func unwrapPrefixes(tokens []string) []string {
-	for len(tokens) > 0 {
-		tok := tokens[0]
+func unwrapPrefixes(tokens []string) unwrapResult {
+	result := unwrapResult{tokens: tokens}
+	for len(result.tokens) > 0 {
+		tok := result.tokens[0]
 		base := filepath.Base(tok)
 
 		// sudo — skip it (and optional -E, -u user, etc.)
 		if base == "sudo" {
-			tokens = tokens[1:]
+			result.tokens = result.tokens[1:]
 			// Skip sudo flags
-			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
-				flag := tokens[0]
-				tokens = tokens[1:]
+			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
+				flag := result.tokens[0]
+				result.tokens = result.tokens[1:]
 				// -u takes a following argument
-				if (flag == "-u" || flag == "--user") && len(tokens) > 0 {
-					tokens = tokens[1:]
+				if (flag == "-u" || flag == "--user") && len(result.tokens) > 0 {
+					result.tokens = result.tokens[1:]
 				}
 			}
 			continue
@@ -380,28 +404,29 @@ func unwrapPrefixes(tokens []string) []string {
 
 		// env — skip it and any env flags / VAR=val assignments
 		if base == "env" {
-			tokens = tokens[1:]
+			result.tokens = result.tokens[1:]
 			// Skip env flags and VAR=val pairs. -S/--split-string retokenizes its
 			// argument because env will split that string into argv before exec.
-			for len(tokens) > 0 {
-				if strings.HasPrefix(tokens[0], "-") {
-					flag := tokens[0]
-					tokens = tokens[1:]
+			for len(result.tokens) > 0 {
+				if strings.HasPrefix(result.tokens[0], "-") {
+					flag := result.tokens[0]
+					result.tokens = result.tokens[1:]
 					if isEnvSplitStringFlag(flag) {
-						if len(tokens) == 0 {
-							return nil
+						if len(result.tokens) == 0 {
+							return unwrapResult{}
 						}
-						inner := Tokenize(tokens[0])
-						tokens = append(inner, tokens[1:]...)
+						inner := Tokenize(result.tokens[0])
+						result.tokens = append(inner, result.tokens[1:]...)
 						continue
 					}
-					if envFlagTakesValue(flag) && len(tokens) > 0 {
-						tokens = tokens[1:]
+					if envFlagTakesValue(flag) && len(result.tokens) > 0 {
+						result.tokens = result.tokens[1:]
 					}
 					continue
 				}
-				if isEnvVarAssignment(tokens[0]) {
-					tokens = tokens[1:]
+				if isEnvVarAssignment(result.tokens[0]) {
+					recordSourceEnvAssignment(result.tokens[0], &result.source)
+					result.tokens = result.tokens[1:]
 					continue
 				}
 				break
@@ -413,15 +438,15 @@ func unwrapPrefixes(tokens []string) []string {
 		// Only unwrap when -c is present; other forms like "bash script.sh ..."
 		// are not transparent wrappers and must not expose trailing arguments.
 		if base == "bash" || base == "sh" || base == "zsh" {
-			saved := tokens // preserve in case we can't find -c
-			tokens = tokens[1:]
+			saved := result.tokens // preserve in case we can't find -c
+			result.tokens = result.tokens[1:]
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
 			// Shell flags that take a separate value (-o, -O, --rcfile, etc.) must
 			// consume that value to avoid mistaking it for a script filename.
 			foundC := false
-			for len(tokens) > 0 {
-				flag := tokens[0]
-				tokens = tokens[1:]
+			for len(result.tokens) > 0 {
+				flag := result.tokens[0]
+				result.tokens = result.tokens[1:]
 				if flag == "-c" {
 					foundC = true
 					break
@@ -434,8 +459,8 @@ func unwrapPrefixes(tokens []string) []string {
 				}
 				// Flags that take a value must consume the next token.
 				if shellFlagTakesValue(flag) {
-					if len(tokens) > 0 {
-						tokens = tokens[1:]
+					if len(result.tokens) > 0 {
+						result.tokens = result.tokens[1:]
 					}
 					continue
 				}
@@ -447,37 +472,39 @@ func unwrapPrefixes(tokens []string) []string {
 				// This is NOT a transparent wrapper — restore original tokens and
 				// let the outer loop break so the parsers see "bash" as tokens[0]
 				// (which won't match npm/pnpm).
-				return saved
+				result.tokens = saved
+				return result
 			}
-			if foundC && len(tokens) > 0 {
+			if foundC && len(result.tokens) > 0 {
 				// The next token is the command string; re-tokenize it.
 				// Any tokens after the command string are positional args
 				// ($0, $1, ...) for the shell, NOT commands — discard them.
 				// The caller (parseSegment) handles splitting at shell
 				// operators inside the expanded -c string.
-				inner := Tokenize(tokens[0])
-				tokens = inner
+				inner := Tokenize(result.tokens[0])
+				result.tokens = inner
 				continue
 			}
 			// No -c found or ran out of tokens — not a wrapper we handle
-			return saved
+			result.tokens = saved
+			return result
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags
 		if base == "command" || base == "time" || base == "nice" || base == "npx" {
-			tokens = tokens[1:]
+			result.tokens = result.tokens[1:]
 			// "command -v" is introspection (like `which`), not execution.
 			// Return empty to prevent the remaining tokens from being parsed.
-			if base == "command" && len(tokens) > 0 && (tokens[0] == "-v" || tokens[0] == "-V") {
-				return nil
+			if base == "command" && len(result.tokens) > 0 && (result.tokens[0] == "-v" || result.tokens[0] == "-V") {
+				return unwrapResult{}
 			}
 			// Skip flags (e.g., "nice -n 10", "npx --yes")
-			for len(tokens) > 0 && strings.HasPrefix(tokens[0], "-") {
-				flag := tokens[0]
-				tokens = tokens[1:]
+			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
+				flag := result.tokens[0]
+				result.tokens = result.tokens[1:]
 				// nice -n takes a value; npx --package takes a value
-				if (flag == "-n" || flag == "--package" || flag == "-p") && len(tokens) > 0 {
-					tokens = tokens[1:]
+				if (flag == "-n" || flag == "--package" || flag == "-p") && len(result.tokens) > 0 {
+					result.tokens = result.tokens[1:]
 				}
 			}
 			continue
@@ -485,14 +512,15 @@ func unwrapPrefixes(tokens []string) []string {
 
 		// Inline env-var assignment (e.g., NODE_ENV=production npm install axios)
 		if strings.Contains(tok, "=") && !strings.HasPrefix(tok, "-") && isEnvVarAssignment(tok) {
-			tokens = tokens[1:]
+			recordSourceEnvAssignment(tok, &result.source)
+			result.tokens = result.tokens[1:]
 			continue
 		}
 
 		// Nothing more to strip
 		break
 	}
-	return tokens
+	return result
 }
 
 // isEnvVarAssignment returns true if tok looks like KEY=value where KEY is a
@@ -514,6 +542,66 @@ func isEnvVarAssignment(tok string) bool {
 		return false
 	}
 	return true
+}
+
+func applySourceOverrideContext(cmd *api.ParsedCommand, ctx sourceOverrideContext) {
+	switch cmd.PackageManager {
+	case "pip", "pip3":
+		if ctx.pipNonLocal {
+			cmd.Packages = nil
+			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
+		}
+	case "go":
+		if ctx.goNonLocal {
+			cmd.Packages = nil
+			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
+		}
+	}
+}
+
+func recordSourceEnvAssignment(tok string, ctx *sourceOverrideContext) {
+	key, value, ok := strings.Cut(tok, "=")
+	if !ok {
+		return
+	}
+
+	switch key {
+	case "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "PIP_REQUIREMENT", "PIP_CONSTRAINT", "PIP_NO_INDEX":
+		if strings.TrimSpace(value) != "" {
+			ctx.pipNonLocal = true
+		}
+	case "GOPRIVATE", "GONOPROXY":
+		if strings.TrimSpace(value) != "" {
+			ctx.goNonLocal = true
+		}
+	case "GOPROXY":
+		if !goProxyUsesPublicRegistryValue(value) {
+			ctx.goNonLocal = true
+		}
+	}
+}
+
+func goProxyUsesPublicRegistryValue(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+
+	for _, entry := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '|'
+	}) {
+		switch entry {
+		case "", "direct", "off":
+			return false
+		case "https://proxy.golang.org", "https://proxy.golang.org/", "http://proxy.golang.org", "http://proxy.golang.org/":
+			return true
+		default:
+			return false
+		}
+	}
+
+	return false
 }
 
 // commandSegments splits tokens at shell operators into separate command segments.

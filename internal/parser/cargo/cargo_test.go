@@ -20,8 +20,9 @@ func TestParse(t *testing.T) {
 		{"git deferred", []string{"cargo", "add", "--git", "https://github.com/user/repo", "serde"}, false, 0, "", "", false, true, true},
 		{"path deferred", []string{"cargo", "add", "--path", "./local-crate"}, false, 0, "", "", false, true, false},
 		{"registry deferred", []string{"cargo", "add", "serde", "--registry", "internal"}, false, 0, "", "", false, true, true},
+		{"optional boolean flag", []string{"cargo", "add", "--optional", "serde"}, false, 1, "serde", "", false, false, false},
 		{"short features flag", []string{"cargo", "add", "clap", "-F", "derive"}, false, 1, "clap", "", false, false, false},
-		{"unknown flag safety", []string{"cargo", "add", "serde", "--mystery", "internal"}, false, 1, "serde", "", false, true, true},
+		{"unknown flag safety", []string{"cargo", "add", "serde", "--mystery", "internal"}, false, 0, "", "", false, true, true},
 		{"bare add", []string{"cargo", "add"}, false, 0, "", "", false, false, false},
 		{"not add", []string{"cargo", "build"}, true, 0, "", "", false, false, false},
 	}

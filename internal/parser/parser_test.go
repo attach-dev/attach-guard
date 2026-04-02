@@ -443,10 +443,14 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 	}{
 		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false, false},
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
+		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
 		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
+		{"pip inline source env deferred", "PIP_INDEX_URL=https://private.example/simple pip install requests", "pip", 0, "", "", false, true, true},
 		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false, false},
 		{"go deferred local", "go get ./...", "go", 0, "", "", false, true, false},
+		{"go inline private env deferred", "GOPRIVATE=private.example.com go get private.example.com/mod", "go", 0, "", "", false, true, true},
 		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false, false},
+		{"cargo optional boolean flag", "cargo add --optional serde", "cargo", 1, "serde", "", false, false, false},
 		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true, true},
 		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true, true},
 	}

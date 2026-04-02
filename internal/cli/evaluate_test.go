@@ -418,14 +418,17 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 	tests := []string{
 		"pip install -r requirements.txt",
 		"pip install https://github.com/user/repo/archive/main.tar.gz",
+		"pip install git+https://github.com/user/repo.git",
 		"pip install requests>=2.0",
 		"pip install requests[security]",
 		"pip install requests --index-url https://custom.pypi.org/simple",
 		"pip install requests --extra-index-url https://custom.pypi.org/simple",
+		"PIP_INDEX_URL=https://private.example/simple pip install requests",
 		"cargo add --git https://github.com/user/repo",
 		"cargo add serde --registry internal",
 		"cargo add serde@1.0.200",
 		"go get golang.org/x/net@upgrade",
+		"GOPRIVATE=private.example.com go get private.example.com/mod",
 	}
 
 	eval := NewEvaluator(cfg, mock)
@@ -439,6 +442,41 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		}
 		if result.RewrittenCommand != "" {
 			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.200",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 94, Overall: 90},
+	})
+
+	tests := []string{
+		"pip install --upgrade flask",
+		"cargo add --optional serde",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if len(result.Packages) != 1 {
+			t.Fatalf("expected one evaluated package for %q, got %d", cmd, len(result.Packages))
 		}
 	}
 }

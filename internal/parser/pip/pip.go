@@ -38,6 +38,22 @@ var sourceValueFlags = map[string]bool{
 	"--find-links":      true,
 }
 
+var booleanFlags = map[string]bool{
+	"-U":                true,
+	"--upgrade":         true,
+	"-e":                true,
+	"--editable":        true,
+	"--no-deps":         true,
+	"--user":            true,
+	"--force-reinstall": true,
+	"--no-cache-dir":    true,
+}
+
+var nonLocalBooleanFlags = map[string]bool{
+	"--no-index": true,
+	"--pre":      true,
+}
+
 var unparsedValueFlags = map[string]bool{
 	"-c":            true,
 	"--constraint":  true,
@@ -83,6 +99,15 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		}
 		if strings.HasPrefix(tok, "-") {
 			preActionFlags = append(preActionFlags, tok)
+			if booleanFlags[tok] {
+				continue
+			}
+			if nonLocalBooleanFlags[tok] {
+				hasUnparsed = true
+				hasNonLocalUnparsed = true
+				disqualify = true
+				continue
+			}
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
@@ -93,11 +118,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				}
 				continue
 			}
-			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "install") {
+			if isUnknownLongFlag(tok) {
 				hasUnparsed = true
 				hasNonLocalUnparsed = true
-				i++
-				preActionFlags = append(preActionFlags, tokens[i])
+				disqualify = true
 			}
 			continue
 		}
@@ -122,6 +146,16 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		tok := tokens[i]
 		if strings.HasPrefix(tok, "-") {
 			cmd.Flags = append(cmd.Flags, tok)
+			if booleanFlags[tok] {
+				continue
+			}
+			if nonLocalBooleanFlags[tok] {
+				disqualify = true
+				cmd.HasUnparsedArgs = true
+				cmd.HasNonLocalUnparsedArgs = true
+				cmd.Packages = nil
+				continue
+			}
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
@@ -137,11 +171,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				}
 				continue
 			}
-			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "") {
+			if isUnknownLongFlag(tok) {
 				cmd.HasUnparsedArgs = true
 				cmd.HasNonLocalUnparsedArgs = true
-				i++
-				cmd.Flags = append(cmd.Flags, tokens[i])
+				disqualify = true
+				cmd.Packages = nil
 			}
 			continue
 		}
@@ -162,23 +196,23 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	return cmd
 }
 
-func shouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, stopAt string) bool {
-	if !strings.HasPrefix(flag, "--") || strings.Contains(flag, "=") || idx+1 >= len(tokens) {
-		return false
-	}
-	next := tokens[idx+1]
-	if next == stopAt {
-		return false
-	}
-	return !strings.HasPrefix(next, "-")
+func isUnknownLongFlag(flag string) bool {
+	return strings.HasPrefix(flag, "--") &&
+		!strings.Contains(flag, "=") &&
+		!flagsWithValue[flag] &&
+		!booleanFlags[flag] &&
+		!nonLocalBooleanFlags[flag]
 }
 
 func classifySkippedArg(tok string) (local bool, nonLocal bool) {
-	if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
-		return false, true
-	}
 	if strings.HasPrefix(tok, "file://") {
 		return true, false
+	}
+	if strings.Contains(tok, "://") {
+		if strings.Contains(tok, "+file://") {
+			return true, false
+		}
+		return false, true
 	}
 	if strings.HasPrefix(tok, ".") || strings.HasPrefix(tok, "/") {
 		return true, false
