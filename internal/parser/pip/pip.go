@@ -72,6 +72,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	var preActionFlags []string
 	actionIdx := -1
 	hasUnparsed := false
+	hasNonLocalUnparsed := false
 	disqualify := false
 
 	for i := 1; i < len(tokens); i++ {
@@ -87,12 +88,14 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				preActionFlags = append(preActionFlags, tokens[i])
 				if sourceValueFlags[tok] {
 					hasUnparsed = true
+					hasNonLocalUnparsed = true
 					disqualify = true
 				}
 				continue
 			}
 			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "install") {
 				hasUnparsed = true
+				hasNonLocalUnparsed = true
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
 			}
@@ -106,12 +109,13 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	}
 
 	cmd := &api.ParsedCommand{
-		PackageManager:  base,
-		Action:          "install",
-		PreActionFlags:  preActionFlags,
-		IsInstall:       true,
-		RawCommand:      rawCommand,
-		HasUnparsedArgs: hasUnparsed,
+		PackageManager:          base,
+		Action:                  "install",
+		PreActionFlags:          preActionFlags,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+		HasUnparsedArgs:         hasUnparsed,
+		HasNonLocalUnparsedArgs: hasNonLocalUnparsed,
 	}
 
 	for i := actionIdx + 1; i < len(tokens); i++ {
@@ -124,15 +128,18 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				if sourceValueFlags[tok] {
 					disqualify = true
 					cmd.HasUnparsedArgs = true
+					cmd.HasNonLocalUnparsedArgs = true
 					cmd.Packages = nil
 				}
 				if unparsedValueFlags[tok] {
 					cmd.HasUnparsedArgs = true
+					cmd.HasNonLocalUnparsedArgs = true
 				}
 				continue
 			}
 			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "") {
 				cmd.HasUnparsedArgs = true
+				cmd.HasNonLocalUnparsedArgs = true
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
 			}
@@ -142,8 +149,11 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			cmd.HasUnparsedArgs = true
 			continue
 		}
-		if shouldSkipArg(tok) {
+		if local, nonLocal := classifySkippedArg(tok); local || nonLocal {
 			cmd.HasUnparsedArgs = true
+			if nonLocal {
+				cmd.HasNonLocalUnparsedArgs = true
+			}
 			continue
 		}
 		cmd.Packages = append(cmd.Packages, parseSpec(tok))
@@ -163,29 +173,33 @@ func shouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, st
 	return !strings.HasPrefix(next, "-")
 }
 
-func shouldSkipArg(tok string) bool {
-	if strings.HasPrefix(tok, ".") || strings.HasPrefix(tok, "/") ||
-		strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") ||
-		strings.HasPrefix(tok, "file://") {
-		return true
+func classifySkippedArg(tok string) (local bool, nonLocal bool) {
+	if strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
+		return false, true
+	}
+	if strings.HasPrefix(tok, "file://") {
+		return true, false
+	}
+	if strings.HasPrefix(tok, ".") || strings.HasPrefix(tok, "/") {
+		return true, false
 	}
 	if strings.Contains(tok, "/") {
-		return true
+		return true, false
 	}
 	for _, suffix := range localArchiveSuffixes {
 		if strings.HasSuffix(tok, suffix) {
-			return true
+			return true, false
 		}
 	}
 	if strings.Contains(tok, "[") {
-		return true
+		return false, true
 	}
 	for _, op := range rangeOperators {
 		if strings.Contains(tok, op) {
-			return true
+			return false, true
 		}
 	}
-	return false
+	return false, false
 }
 
 func parseSpec(tok string) api.PackageRequest {

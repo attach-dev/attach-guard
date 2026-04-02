@@ -67,6 +67,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			cmd.Packages = append(cmd.Packages, pkg)
 		} else {
 			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
 		}
 	}
 

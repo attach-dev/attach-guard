@@ -13,23 +13,24 @@ func TestParse(t *testing.T) {
 		wantVersion  string
 		wantPinned   bool
 		wantUnparsed bool
+		wantNonLocal bool
 	}{
-		{"basic", []string{"pip", "install", "requests"}, false, "pip", 1, "requests", "", false, false},
-		{"pip3 pinned", []string{"pip3", "install", "requests==2.31.0"}, false, "pip3", 1, "requests", "2.31.0", true, false},
-		{"bare install", []string{"pip", "install"}, false, "pip", 0, "", "", false, false},
-		{"skip local path", []string{"pip", "install", "."}, false, "pip", 0, "", "", false, true},
-		{"skip relative wheel path", []string{"pip", "install", "dist/pkg.whl"}, false, "pip", 0, "", "", false, true},
-		{"skip file url", []string{"pip", "install", "file:///tmp/pkg.whl"}, false, "pip", 0, "", "", false, true},
-		{"skip requirement file", []string{"pip", "install", "-r", "requirements.txt"}, false, "pip", 0, "", "", false, true},
-		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true},
-		{"range deferred", []string{"pip", "install", "requests>=2.0"}, false, "pip", 0, "", "", false, true},
-		{"extras deferred", []string{"pip", "install", "requests[security]"}, false, "pip", 0, "", "", false, true},
-		{"index url disqualifies public lookup", []string{"pip", "install", "flask", "--index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true},
-		{"extra index disqualifies public lookup", []string{"pip", "install", "flask", "--extra-index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true},
-		{"find links disqualifies public lookup", []string{"pip", "install", "flask", "--find-links", "https://example.com/simple"}, false, "pip", 0, "", "", false, true},
-		{"known flag value not package", []string{"pip", "install", "flask", "--target", "/tmp"}, false, "pip", 1, "flask", "", false, false},
-		{"unknown flag safety", []string{"pip", "install", "flask", "--mystery", "/tmp"}, false, "pip", 1, "flask", "", false, true},
-		{"not install", []string{"pip", "--version"}, true, "", 0, "", "", false, false},
+		{"basic", []string{"pip", "install", "requests"}, false, "pip", 1, "requests", "", false, false, false},
+		{"pip3 pinned", []string{"pip3", "install", "requests==2.31.0"}, false, "pip3", 1, "requests", "2.31.0", true, false, false},
+		{"bare install", []string{"pip", "install"}, false, "pip", 0, "", "", false, false, false},
+		{"skip local path", []string{"pip", "install", "."}, false, "pip", 0, "", "", false, true, false},
+		{"skip relative wheel path", []string{"pip", "install", "dist/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
+		{"skip file url", []string{"pip", "install", "file:///tmp/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
+		{"skip requirement file", []string{"pip", "install", "-r", "requirements.txt"}, false, "pip", 0, "", "", false, true, true},
+		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true, false},
+		{"range deferred", []string{"pip", "install", "requests>=2.0"}, false, "pip", 0, "", "", false, true, true},
+		{"extras deferred", []string{"pip", "install", "requests[security]"}, false, "pip", 0, "", "", false, true, true},
+		{"index url disqualifies public lookup", []string{"pip", "install", "flask", "--index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true, true},
+		{"extra index disqualifies public lookup", []string{"pip", "install", "flask", "--extra-index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true, true},
+		{"find links disqualifies public lookup", []string{"pip", "install", "flask", "--find-links", "https://example.com/simple"}, false, "pip", 0, "", "", false, true, true},
+		{"known flag value not package", []string{"pip", "install", "flask", "--target", "/tmp"}, false, "pip", 1, "flask", "", false, false, false},
+		{"unknown flag safety", []string{"pip", "install", "flask", "--mystery", "/tmp"}, false, "pip", 1, "flask", "", false, true, true},
+		{"not install", []string{"pip", "--version"}, true, "", 0, "", "", false, false, false},
 	}
 
 	for _, tt := range tests {
@@ -52,6 +53,9 @@ func TestParse(t *testing.T) {
 			}
 			if got.HasUnparsedArgs != tt.wantUnparsed {
 				t.Fatalf("HasUnparsedArgs = %v, want %v", got.HasUnparsedArgs, tt.wantUnparsed)
+			}
+			if got.HasNonLocalUnparsedArgs != tt.wantNonLocal {
+				t.Fatalf("HasNonLocalUnparsedArgs = %v, want %v", got.HasNonLocalUnparsedArgs, tt.wantNonLocal)
 			}
 			if tt.wantCount > 0 {
 				if got.Packages[0].Name != tt.wantName || got.Packages[0].Version != tt.wantVersion || got.Packages[0].Pinned != tt.wantPinned {

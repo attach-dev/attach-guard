@@ -39,6 +39,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	var preActionFlags []string
 	actionIdx := -1
 	hasUnparsed := false
+	hasNonLocalUnparsed := false
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
 		if tok == "add" {
@@ -50,13 +51,18 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
-				if tok == "--git" || tok == "--path" || tok == "--registry" {
+				if tok == "--git" || tok == "--registry" {
+					hasUnparsed = true
+					hasNonLocalUnparsed = true
+				}
+				if tok == "--path" {
 					hasUnparsed = true
 				}
 				continue
 			}
 			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "add") {
 				hasUnparsed = true
+				hasNonLocalUnparsed = true
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
 			}
@@ -69,12 +75,13 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	}
 
 	cmd := &api.ParsedCommand{
-		PackageManager:  "cargo",
-		Action:          "add",
-		PreActionFlags:  preActionFlags,
-		IsInstall:       true,
-		RawCommand:      rawCommand,
-		HasUnparsedArgs: hasUnparsed,
+		PackageManager:          "cargo",
+		Action:                  "add",
+		PreActionFlags:          preActionFlags,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+		HasUnparsedArgs:         hasUnparsed,
+		HasNonLocalUnparsedArgs: hasNonLocalUnparsed,
 	}
 
 	disqualify := hasUnparsed
@@ -85,7 +92,13 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
-				if tok == "--git" || tok == "--path" || tok == "--registry" {
+				if tok == "--git" || tok == "--registry" {
+					disqualify = true
+					cmd.HasUnparsedArgs = true
+					cmd.HasNonLocalUnparsedArgs = true
+					cmd.Packages = nil
+				}
+				if tok == "--path" {
 					disqualify = true
 					cmd.HasUnparsedArgs = true
 					cmd.Packages = nil
@@ -94,6 +107,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			}
 			if shouldConsumeUnknownLongFlagValue(tok, tokens, i, "") {
 				cmd.HasUnparsedArgs = true
+				cmd.HasNonLocalUnparsedArgs = true
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
 			}
@@ -107,6 +121,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			cmd.Packages = append(cmd.Packages, pkg)
 		} else {
 			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
 		}
 	}
 

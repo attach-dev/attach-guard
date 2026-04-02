@@ -12,15 +12,16 @@ func TestParse(t *testing.T) {
 		wantVersion  string
 		wantPinned   bool
 		wantUnparsed bool
+		wantNonLocal bool
 	}{
-		{"basic", []string{"go", "get", "golang.org/x/net"}, false, 1, "golang.org/x/net", "", false, false},
-		{"latest", []string{"go", "get", "golang.org/x/net@latest"}, false, 1, "golang.org/x/net", "", false, false},
-		{"exact semver", []string{"go", "get", "golang.org/x/net@v0.25.0"}, false, 1, "golang.org/x/net", "v0.25.0", true, false},
-		{"local path deferred", []string{"go", "get", "./..."}, false, 0, "", "", false, true},
-		{"query deferred", []string{"go", "get", "golang.org/x/net@upgrade"}, false, 0, "", "", false, true},
-		{"prefix deferred", []string{"go", "get", "golang.org/x/net@v0.3"}, false, 0, "", "", false, true},
-		{"bare get", []string{"go", "get"}, false, 0, "", "", false, false},
-		{"not get", []string{"go", "build", "./..."}, true, 0, "", "", false, false},
+		{"basic", []string{"go", "get", "golang.org/x/net"}, false, 1, "golang.org/x/net", "", false, false, false},
+		{"latest", []string{"go", "get", "golang.org/x/net@latest"}, false, 1, "golang.org/x/net", "", false, false, false},
+		{"exact semver", []string{"go", "get", "golang.org/x/net@v0.25.0"}, false, 1, "golang.org/x/net", "v0.25.0", true, false, false},
+		{"local path deferred", []string{"go", "get", "./..."}, false, 0, "", "", false, true, false},
+		{"query deferred", []string{"go", "get", "golang.org/x/net@upgrade"}, false, 0, "", "", false, true, true},
+		{"prefix deferred", []string{"go", "get", "golang.org/x/net@v0.3"}, false, 0, "", "", false, true, true},
+		{"bare get", []string{"go", "get"}, false, 0, "", "", false, false, false},
+		{"not get", []string{"go", "build", "./..."}, true, 0, "", "", false, false, false},
 	}
 
 	for _, tt := range tests {
@@ -40,6 +41,9 @@ func TestParse(t *testing.T) {
 			}
 			if got.HasUnparsedArgs != tt.wantUnparsed {
 				t.Fatalf("HasUnparsedArgs = %v, want %v", got.HasUnparsedArgs, tt.wantUnparsed)
+			}
+			if got.HasNonLocalUnparsedArgs != tt.wantNonLocal {
+				t.Fatalf("HasNonLocalUnparsedArgs = %v, want %v", got.HasNonLocalUnparsedArgs, tt.wantNonLocal)
 			}
 			if tt.wantCount > 0 {
 				if got.Packages[0].Name != tt.wantName || got.Packages[0].Version != tt.wantVersion || got.Packages[0].Pinned != tt.wantPinned {

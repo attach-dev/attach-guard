@@ -439,15 +439,16 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		wantVersion  string
 		wantPinned   bool
 		wantUnparsed bool
+		wantNonLocal bool
 	}{
-		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false},
-		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true},
-		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true},
-		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false},
-		{"go deferred local", "go get ./...", "go", 0, "", "", false, true},
-		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false},
-		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true},
-		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true},
+		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
+		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
+		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false, false},
+		{"go deferred local", "go get ./...", "go", 0, "", "", false, true, false},
+		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false, false},
+		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true, true},
+		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true, true},
 	}
 
 	for _, tt := range tests {
@@ -464,6 +465,9 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 			}
 			if result.HasUnparsedArgs != tt.wantUnparsed {
 				t.Fatalf("Parse(%q).HasUnparsedArgs = %v, want %v", tt.command, result.HasUnparsedArgs, tt.wantUnparsed)
+			}
+			if result.HasNonLocalUnparsedArgs != tt.wantNonLocal {
+				t.Fatalf("Parse(%q).HasNonLocalUnparsedArgs = %v, want %v", tt.command, result.HasNonLocalUnparsedArgs, tt.wantNonLocal)
 			}
 			if tt.wantCount > 0 {
 				if result.Packages[0].Name != tt.wantName || result.Packages[0].Version != tt.wantVersion || result.Packages[0].Pinned != tt.wantPinned {

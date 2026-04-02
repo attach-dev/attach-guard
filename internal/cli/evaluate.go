@@ -89,7 +89,6 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 	selectedVersions := make(map[string]string)
 	anyRewritten := false
 	unsupportedByCmd := make(map[int]int)
-	evaluatedByCmd := make(map[int]int)
 
 	selector := versionselect.NewSelector(e.prov, e.engine, e.cfg)
 
@@ -144,7 +143,6 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			eval.AgeHours = time.Since(v.PublishedAt).Hours()
 			eval.Alerts = v.Alerts
 			packages = append(packages, eval)
-			evaluatedByCmd[cmdIdx]++
 
 			if pkg.Pinned {
 				// Use the selector's policy decision for the pinned version
@@ -182,14 +180,12 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 	for cmdIdx, cmd := range enabledCmds {
 		if unsupportedByCmd[cmdIdx] > 0 {
 			anyUnsupportedSource = true
-			if evaluatedByCmd[cmdIdx] > 0 {
-				overallDecision = worseDecision(overallDecision, api.Ask)
-				reasons = append(reasons, fmt.Sprintf("%s: command contains package sources that could not be evaluated; manual review required", cmd.PackageManager))
-			}
-		}
-		if cmd.HasUnparsedArgs && len(cmd.Packages) > 0 {
 			overallDecision = worseDecision(overallDecision, api.Ask)
-			reasons = append(reasons, fmt.Sprintf("%s: command contains arguments that could not be evaluated; manual review required", cmd.PackageManager))
+			reasons = append(reasons, fmt.Sprintf("%s: command contains package sources that could not be evaluated; manual review required", cmd.PackageManager))
+		}
+		if cmd.HasNonLocalUnparsedArgs {
+			overallDecision = worseDecision(overallDecision, api.Ask)
+			reasons = append(reasons, fmt.Sprintf("%s: command contains non-local arguments that could not be evaluated; manual review required", cmd.PackageManager))
 			break
 		}
 	}
