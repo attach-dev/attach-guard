@@ -106,7 +106,15 @@ if [[ ! -x "$BINARY" ]]; then
       CHECKSUMS_FILE="$(mktemp)"
       if curl -fSL --connect-timeout 5 --max-time 10 -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL" 2>/dev/null; then
         EXPECTED="$(grep "attach-guard-${OS}-${ARCH}" "$CHECKSUMS_FILE" | awk '{print $1}')"
-        ACTUAL="$(shasum -a 256 "$BINARY" | awk '{print $1}')"
+        if command -v shasum &>/dev/null; then
+          SHA_CMD="shasum -a 256"
+        elif command -v sha256sum &>/dev/null; then
+          SHA_CMD="sha256sum"
+        else
+          rm -f "$CHECKSUMS_FILE" "$BINARY"
+          fatal_error "no SHA-256 tool found (need shasum or sha256sum)."
+        fi
+        ACTUAL="$($SHA_CMD "$BINARY" | awk '{print $1}')"
         rm -f "$CHECKSUMS_FILE"
         if [[ -n "$EXPECTED" && "$EXPECTED" != "$ACTUAL" ]]; then
           rm -f "$BINARY"
