@@ -12,7 +12,9 @@
   "skills": "./skills/",
   "userConfig": {
     "socket_api_token": {
+      "title": "Socket API Token",
       "description": "Socket.dev API token for package risk lookups (free tier available at socket.dev)",
+      "type": "string",
       "sensitive": true
     }
   }
