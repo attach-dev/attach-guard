@@ -90,6 +90,55 @@ func TestCommand(t *testing.T) {
 			versions: map[string]string{"axios": "1.7.0"},
 			expected: "npm --prefix ./app install axios@1.7.0 --save-dev",
 		},
+		{
+			name: "pip rewrite uses exact pin format",
+			cmd: &api.ParsedCommand{
+				PackageManager: "pip",
+				Action:         "install",
+				Packages: []api.PackageRequest{
+					{Name: "requests", RawSpec: "requests"},
+				},
+			},
+			versions: map[string]string{"requests": "2.31.0"},
+			expected: "pip install requests==2.31.0",
+		},
+		{
+			name: "go rewrite keeps v prefix",
+			cmd: &api.ParsedCommand{
+				PackageManager: "go",
+				Action:         "get",
+				Packages: []api.PackageRequest{
+					{Name: "golang.org/x/net", RawSpec: "golang.org/x/net"},
+				},
+			},
+			versions: map[string]string{"golang.org/x/net": "v0.25.0"},
+			expected: "go get golang.org/x/net@v0.25.0",
+		},
+		{
+			name: "go rewrite keeps flags before package args",
+			cmd: &api.ParsedCommand{
+				PackageManager: "go",
+				Action:         "get",
+				Flags:          []string{"-u"},
+				Packages: []api.PackageRequest{
+					{Name: "golang.org/x/net", RawSpec: "golang.org/x/net"},
+				},
+			},
+			versions: map[string]string{"golang.org/x/net": "v0.25.0"},
+			expected: "go get -u golang.org/x/net@v0.25.0",
+		},
+		{
+			name: "cargo rewrite uses exact requirement syntax",
+			cmd: &api.ParsedCommand{
+				PackageManager: "cargo",
+				Action:         "add",
+				Packages: []api.PackageRequest{
+					{Name: "serde", RawSpec: "serde"},
+				},
+			},
+			versions: map[string]string{"serde": "1.0.200"},
+			expected: "cargo add serde@=1.0.200",
+		},
 	}
 
 	for _, tt := range tests {

@@ -351,6 +351,9 @@ func TestLooksLikeInstall(t *testing.T) {
 		"/opt/bin/mystery npm install lodash",
 		"strace npm install axios",
 		"nohup npm install axios",
+		"strace pip --proxy http://proxy.example install flask",
+		"strace pip -i https://custom.example/simple install flask",
+		"strace cargo --color always add serde",
 		"watch pnpm add react",
 		"strace bash -c 'npm install axios'",
 		"ltrace sh -c 'pnpm add react'",
@@ -397,6 +400,12 @@ func TestIsInstallCommand(t *testing.T) {
 		"pnpm add express",
 		"pnpm --filter web add react",
 		"npm --prefix ./app install axios",
+		"pip install requests",
+		"go get golang.org/x/net",
+		"cargo add serde",
+		"pip install .",
+		"go get ./...",
+		"cargo add --git https://github.com/user/repo",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {
@@ -412,10 +421,74 @@ func TestIsInstallCommand(t *testing.T) {
 		"pnpm run build",
 		"npm install",
 		"echo hello",
+		"pip --version",
+		"go build ./...",
+		"cargo build",
 	}
 	for _, cmd := range nonInstallCmds {
 		if IsInstallCommand(cmd) {
 			t.Errorf("IsInstallCommand(%q) = true, want false", cmd)
 		}
+	}
+}
+
+func TestParse_MultiEcosystemCommands(t *testing.T) {
+	tests := []struct {
+		name         string
+		command      string
+		wantPM       string
+		wantCount    int
+		wantName     string
+		wantVersion  string
+		wantPinned   bool
+		wantUnparsed bool
+		wantNonLocal bool
+	}{
+		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"pip pre action proxy deferred", "pip --proxy http://proxy.example install requests", "pip", 0, "", "", false, true, true},
+		{"pip assignment source deferred", "pip install requests --index-url=https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
+		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
+		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, true},
+		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
+		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
+		{"pip inline file index env deferred", "PIP_INDEX_URL=file:///tmp/simple pip install requests", "pip", 0, "", "", false, true, true},
+		{"pip inline local find links env", "PIP_FIND_LINKS=./dist pip install flask", "pip", 0, "", "", false, true, true},
+		{"pip inline source env deferred", "PIP_INDEX_URL=https://private.example/simple pip install requests", "pip", 0, "", "", false, true, true},
+		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false, false},
+		{"go deferred local", "go get ./...", "go", 0, "", "", false, true, false},
+		{"go deferred current module dot", "go get .", "go", 0, "", "", false, true, false},
+		{"go inline private env deferred", "GOPRIVATE=private.example.com go get private.example.com/mod", "go", 0, "", "", false, true, true},
+		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false, false},
+		{"cargo optional boolean flag", "cargo add --optional serde", "cargo", 1, "serde", "", false, false, false},
+		{"cargo pre action color assignment", "cargo --color=always add serde", "cargo", 1, "serde", "", false, false, false},
+		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true, true},
+		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true, true},
+		{"cargo custom registry assignment deferred", "cargo add serde --registry=internal", "cargo", 0, "", "", false, true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("Parse(%q).PackageManager = %q, want %q", tt.command, result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != tt.wantCount {
+				t.Fatalf("Parse(%q) found %d packages, want %d", tt.command, len(result.Packages), tt.wantCount)
+			}
+			if result.HasUnparsedArgs != tt.wantUnparsed {
+				t.Fatalf("Parse(%q).HasUnparsedArgs = %v, want %v", tt.command, result.HasUnparsedArgs, tt.wantUnparsed)
+			}
+			if result.HasNonLocalUnparsedArgs != tt.wantNonLocal {
+				t.Fatalf("Parse(%q).HasNonLocalUnparsedArgs = %v, want %v", tt.command, result.HasNonLocalUnparsedArgs, tt.wantNonLocal)
+			}
+			if tt.wantCount > 0 {
+				if result.Packages[0].Name != tt.wantName || result.Packages[0].Version != tt.wantVersion || result.Packages[0].Pinned != tt.wantPinned {
+					t.Fatalf("Parse(%q).Packages[0] = %#v, want name=%q version=%q pinned=%v", tt.command, result.Packages[0], tt.wantName, tt.wantVersion, tt.wantPinned)
+				}
+			}
+		})
 	}
 }

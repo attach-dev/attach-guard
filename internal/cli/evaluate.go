@@ -81,17 +81,18 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 	}
 
 	provAvailable := e.prov.IsAvailable(ctx)
-	canRewrite := len(cmds) == 1 && len(enabledCmds) == 1 && rewriteEligible(rawCommand, enabledCmds[0])
+	canRewriteShape := len(cmds) == 1 && len(enabledCmds) == 1 && rewriteEligible(rawCommand, enabledCmds[0])
 
 	var packages []api.PackageEvaluation
 	var overallDecision api.Decision = api.Allow
 	var reasons []string
 	selectedVersions := make(map[string]string)
 	anyRewritten := false
+	unsupportedByCmd := make(map[int]bool)
 
 	selector := versionselect.NewSelector(e.prov, e.engine, e.cfg)
 
-	for _, cmd := range enabledCmds {
+	for cmdIdx, cmd := range enabledCmds {
 		for _, pkg := range cmd.Packages {
 			eval := api.PackageEvaluation{
 				Ecosystem: pkg.Ecosystem,
@@ -121,6 +122,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 				return nil, fmt.Errorf("evaluating %s: %w", pkg.Name, err)
 			}
 
+			if result.UnsupportedSource {
+				packages = append(packages, eval)
+				unsupportedByCmd[cmdIdx] = true
+				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, result.Reason))
+				continue
+			}
+
 			if result.AllFailed {
 				eval.SelectedVersion = ""
 				packages = append(packages, eval)
@@ -146,7 +154,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 			}
 
 			// Unpinned — use version selection result
-			if canRewrite {
+			if canRewriteShape {
 				selectedVersions[pkg.Name] = v.Version
 			}
 
@@ -155,16 +163,30 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 			if result.WasRewritten {
 				anyRewritten = true
-				if !canRewrite || !e.engine.ShouldAutoRewrite(mode) {
+				if !canRewriteShape || !e.engine.ShouldAutoRewrite(mode) {
 					overallDecision = worseDecision(overallDecision, api.Ask)
 				}
-				if !canRewrite {
+				if !canRewriteShape {
 					reasons = append(reasons, fmt.Sprintf("%s: manual review required because the command could not be safely rewritten", pkg.Name))
 				}
 				reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
 			} else if result.Decision == api.Ask {
 				reasons = append(reasons, fmt.Sprintf("%s: scores are in review range", pkg.Name))
 			}
+		}
+	}
+
+	anyUnsupportedSource := false
+	for cmdIdx, cmd := range enabledCmds {
+		if unsupportedByCmd[cmdIdx] {
+			anyUnsupportedSource = true
+			overallDecision = worseDecision(overallDecision, api.Ask)
+			reasons = append(reasons, fmt.Sprintf("%s: command contains package sources that could not be evaluated; manual review required", cmd.PackageManager))
+		}
+		if cmd.HasNonLocalUnparsedArgs {
+			overallDecision = worseDecision(overallDecision, api.Ask)
+			reasons = append(reasons, fmt.Sprintf("%s: command contains non-local arguments that could not be evaluated; manual review required", cmd.PackageManager))
+			break
 		}
 	}
 
@@ -177,7 +199,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		Packages:        packages,
 	}
 
-	if anyRewritten && canRewrite {
+	if anyRewritten && canRewriteShape && !anyUnsupportedSource {
 		evalResult.RewrittenCommand = rewrite.Command(enabledCmds[0], selectedVersions)
 	}
 
@@ -234,6 +256,12 @@ func (e *Evaluator) packageManagerEnabled(pm string) bool {
 		return e.cfg.PackageManagers.NPM
 	case "pnpm":
 		return e.cfg.PackageManagers.PNPM
+	case "pip", "pip3":
+		return e.cfg.PackageManagers.Pip
+	case "go":
+		return e.cfg.PackageManagers.Go
+	case "cargo":
+		return e.cfg.PackageManagers.Cargo
 	default:
 		return true
 	}
@@ -251,6 +279,9 @@ func disabledPackageManagersReason(disabledPMs []string) string {
 }
 
 func rewriteEligible(rawCommand string, cmd *api.ParsedCommand) bool {
+	if cmd.HasUnparsedArgs {
+		return false
+	}
 	tokens := parser.Tokenize(rawCommand)
 	if len(tokens) == 0 || filepath.Base(tokens[0]) != cmd.PackageManager {
 		return false

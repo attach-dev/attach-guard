@@ -12,10 +12,10 @@ import (
 
 // Config is the top-level configuration.
 type Config struct {
-	Provider        ProviderConfig  `yaml:"provider"`
-	Policy          PolicyConfig    `yaml:"policy"`
-	PackageManagers PMConfig        `yaml:"package_managers"`
-	Logging         LoggingConfig   `yaml:"logging"`
+	Provider        ProviderConfig `yaml:"provider"`
+	Policy          PolicyConfig   `yaml:"policy"`
+	PackageManagers PMConfig       `yaml:"package_managers"`
+	Logging         LoggingConfig  `yaml:"logging"`
 }
 
 // ProviderConfig configures the risk provider.
@@ -26,15 +26,15 @@ type ProviderConfig struct {
 
 // PolicyConfig holds policy thresholds and behavior.
 type PolicyConfig struct {
-	DenyKnownMalware         bool                      `yaml:"deny_known_malware"`
-	MinSupplyChainScore      float64                   `yaml:"min_supply_chain_score"`
-	MinOverallScore          float64                   `yaml:"min_overall_score"`
-	GrayBandMinSupplyChain   float64                   `yaml:"gray_band_min_supply_chain_score"`
-	MinimumPackageAgeHours   int                       `yaml:"minimum_package_age_hours"`
-	ProviderUnavailable      ProviderUnavailableConfig `yaml:"provider_unavailable_behavior"`
-	AutoRewriteUnpinned      AutoRewriteConfig         `yaml:"auto_rewrite_unpinned"`
-	Allowlist                []string                  `yaml:"allowlist"`
-	Denylist                 []string                  `yaml:"denylist"`
+	DenyKnownMalware       bool                      `yaml:"deny_known_malware"`
+	MinSupplyChainScore    float64                   `yaml:"min_supply_chain_score"`
+	MinOverallScore        float64                   `yaml:"min_overall_score"`
+	GrayBandMinSupplyChain float64                   `yaml:"gray_band_min_supply_chain_score"`
+	MinimumPackageAgeHours int                       `yaml:"minimum_package_age_hours"`
+	ProviderUnavailable    ProviderUnavailableConfig `yaml:"provider_unavailable_behavior"`
+	AutoRewriteUnpinned    AutoRewriteConfig         `yaml:"auto_rewrite_unpinned"`
+	Allowlist              []string                  `yaml:"allowlist"`
+	Denylist               []string                  `yaml:"denylist"`
 }
 
 // ProviderUnavailableConfig defines behavior when the provider is down.
@@ -51,8 +51,11 @@ type AutoRewriteConfig struct {
 
 // PMConfig enables/disables package managers.
 type PMConfig struct {
-	NPM  bool `yaml:"npm"`
-	PNPM bool `yaml:"pnpm"`
+	NPM   bool `yaml:"npm"`
+	PNPM  bool `yaml:"pnpm"`
+	Pip   bool `yaml:"pip"`
+	Go    bool `yaml:"go"`
+	Cargo bool `yaml:"cargo"`
 }
 
 // LoggingConfig configures audit logging.
@@ -83,8 +86,11 @@ func DefaultConfig() *Config {
 			},
 		},
 		PackageManagers: PMConfig{
-			NPM:  true,
-			PNPM: true,
+			NPM:   true,
+			PNPM:  true,
+			Pip:   true,
+			Go:    true,
+			Cargo: true,
 		},
 		Logging: LoggingConfig{
 			Path: "~/.attach-guard/audit.jsonl",

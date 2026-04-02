@@ -204,3 +204,58 @@ func TestSelect_SkipsDeprecated(t *testing.T) {
 		t.Errorf("expected 1.0.0 (skipping deprecated 2.0.0), got %s", result.Selected.Version)
 	}
 }
+
+func TestSelect_UnsupportedSourceAllowsPassthrough(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	mock.VersionsErr = provider.ErrUnsupportedSource
+	engine := policy.NewEngine(cfg)
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemGo,
+		Name:      "private.example.com/module",
+		Pinned:    false,
+	}, api.ModeShell)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UnsupportedSource {
+		t.Fatal("expected unsupported source result")
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow, got %s", result.Decision)
+	}
+	if result.Selected != nil {
+		t.Fatalf("expected no selected version, got %#v", result.Selected)
+	}
+}
+
+func TestSelect_PinnedUnsupportedSourceAllowsPassthrough(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	mock.ScoreErr = provider.ErrUnsupportedSource
+	engine := policy.NewEngine(cfg)
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemGo,
+		Name:      "private.example.com/module",
+		Version:   "v1.2.3",
+		Pinned:    true,
+	}, api.ModeShell)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UnsupportedSource {
+		t.Fatal("expected unsupported source result")
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow, got %s", result.Decision)
+	}
+	if result.Selected != nil {
+		t.Fatalf("expected no selected version, got %#v", result.Selected)
+	}
+}

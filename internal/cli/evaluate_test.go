@@ -169,6 +169,9 @@ func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"some-wrapper npm install lodash",
+		"strace pip --proxy http://proxy.example install flask",
+		"strace pip -i https://custom.example/simple install flask",
+		"strace cargo --color always add serde",
 		"strace bash -c 'npm install axios'",
 		"nohup bash -lc 'npm install lodash'",
 	}
@@ -380,6 +383,358 @@ func TestEvaluate_PreActionFlags(t *testing.T) {
 	}
 	if result.Decision != api.Allow {
 		t.Errorf("expected Allow for pnpm --filter add, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	tests := []string{
+		"pip install .",
+		"pip install dist/pkg.whl",
+		"pip install file:///tmp/pkg.whl",
+		"go get ./...",
+		"cargo add --path ./local-crate",
+		"python -m pip install requests",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_LocalFindLinksForcesManualReview(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	tests := []string{
+		"pip install --find-links ./dist flask",
+		"PIP_FIND_LINKS=./dist pip install flask",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Ask {
+			t.Fatalf("expected Ask for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if len(result.Packages) != 0 {
+			t.Fatalf("expected no evaluated packages for %q, got %#v", cmd, result.Packages)
+		}
+		if result.RewrittenCommand != "" {
+			t.Fatalf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "non-local arguments") {
+			t.Fatalf("expected manual-review reason for %q, got %q", cmd, result.Reason)
+		}
+	}
+}
+
+func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	tests := []string{
+		"pip --proxy http://proxy.example install flask",
+		"pip install --find-links ./dist flask",
+		"PIP_FIND_LINKS=./dist pip install flask",
+		"pip install -r requirements.txt",
+		"pip install https://github.com/user/repo/archive/main.tar.gz",
+		"pip install git+https://github.com/user/repo.git",
+		"pip install requests>=2.0",
+		"pip install requests[security]",
+		"pip install requests --index-url https://custom.pypi.org/simple",
+		"pip install requests --index-url=https://custom.pypi.org/simple",
+		"pip install requests --extra-index-url https://custom.pypi.org/simple",
+		"pip install --requirement=requirements.txt",
+		"PIP_INDEX_URL=file:///tmp/simple pip install requests",
+		"PIP_INDEX_URL=https://private.example/simple pip install requests",
+		"cargo add --git https://github.com/user/repo",
+		"cargo add serde --registry internal",
+		"cargo add serde --registry=internal",
+		"cargo add serde@1.0.200",
+		"go get golang.org/x/net@upgrade",
+		"GOPRIVATE=private.example.com go get private.example.com/mod",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Ask {
+			t.Errorf("expected Ask for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.200",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 94, Overall: 90},
+	})
+
+	tests := []string{
+		"pip install --upgrade flask",
+		"pip install flask --target=/tmp",
+		"cargo --color always add serde",
+		"cargo --color=always add serde",
+		"cargo add --optional serde",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if len(result.Packages) != 1 {
+			t.Fatalf("expected one evaluated package for %q, got %d", cmd, len(result.Packages))
+		}
+	}
+}
+
+func TestEvaluate_UnsupportedGoSourcesAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	tests := []struct {
+		name    string
+		command string
+		setup   func(*provider.MockProvider)
+	}{
+		{
+			name:    "unpinned private module",
+			command: "go get private.example.com/module",
+			setup: func(mock *provider.MockProvider) {
+				mock.VersionsErr = provider.ErrUnsupportedSource
+			},
+		},
+		{
+			name:    "pinned private module",
+			command: "go get private.example.com/module@v1.2.3",
+			setup: func(mock *provider.MockProvider) {
+				mock.ScoreErr = provider.ErrUnsupportedSource
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		mock := provider.NewMockProvider()
+		tt.setup(mock)
+		eval := NewEvaluator(cfg, mock)
+
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("%s: Evaluate(%q) returned error: %v", tt.name, tt.command, err)
+		}
+		if result.Decision != api.Ask {
+			t.Fatalf("%s: expected Ask, got %s: %s", tt.name, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != "" {
+			t.Fatalf("%s: expected no rewrite, got %q", tt.name, result.RewrittenCommand)
+		}
+		if !strings.Contains(result.Reason, "not supported for public-registry evaluation") {
+			t.Fatalf("%s: expected unsupported-source reason, got %q", tt.name, result.Reason)
+		}
+	}
+}
+
+func TestEvaluate_MixedLocalAndParsedArgsAllow(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "pip install . flask", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow for mixed local/parsed command, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "" {
+		t.Fatalf("expected no rewritten command, got %q", result.RewrittenCommand)
+	}
+}
+
+func TestEvaluate_MixedNonLocalAndParsedArgsForceAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("flask", api.VersionInfo{
+		Version:     "3.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "pip install flask requests>=2.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for mixed non-local/parsed command, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "" {
+		t.Fatalf("expected no rewritten command, got %q", result.RewrittenCommand)
+	}
+	if !strings.Contains(result.Reason, "non-local arguments") {
+		t.Fatalf("expected non-local manual review reason, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.32.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.31.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.26.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.25.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.201",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("serde", api.VersionInfo{
+		Version:     "1.0.200",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	tests := []struct {
+		command  string
+		expected string
+	}{
+		{"pip install requests", "pip install requests==2.31.0"},
+		{"go get golang.org/x/net", "go get golang.org/x/net@v0.25.0"},
+		{"cargo add serde", "cargo add serde@=1.0.200"},
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, tt := range tests {
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", tt.command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for %q, got %s: %s", tt.command, result.Decision, result.Reason)
+		}
+		if result.RewrittenCommand != tt.expected {
+			t.Errorf("expected rewritten command %q, got %q", tt.expected, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_GoRewritePreservesFlagPosition(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.26.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("golang.org/x/net", api.VersionInfo{
+		Version:     "v0.25.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "go get -u golang.org/x/net", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "go get -u golang.org/x/net@v0.25.0" {
+		t.Fatalf("expected go flags before package in rewrite, got %q", result.RewrittenCommand)
+	}
+}
+
+func TestEvaluate_DisabledNewPackageManagersAllowPassthrough(t *testing.T) {
+	tests := []struct {
+		command string
+		disable func(*config.Config)
+	}{
+		{"pip install requests", func(cfg *config.Config) { cfg.PackageManagers.Pip = false }},
+		{"go get golang.org/x/net", func(cfg *config.Config) { cfg.PackageManagers.Go = false }},
+		{"cargo add serde", func(cfg *config.Config) { cfg.PackageManagers.Cargo = false }},
+	}
+
+	for _, tt := range tests {
+		cfg := config.DefaultConfig()
+		tt.disable(cfg)
+		mock := provider.NewMockProvider()
+		eval := NewEvaluator(cfg, mock)
+
+		result, err := eval.Evaluate(context.Background(), tt.command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", tt.command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Errorf("expected Allow for disabled PM on %q, got %s", tt.command, result.Decision)
+		}
+		if !strings.Contains(result.Reason, "not enabled") {
+			t.Errorf("expected disabled PM reason for %q, got %q", tt.command, result.Reason)
+		}
 	}
 }
 
