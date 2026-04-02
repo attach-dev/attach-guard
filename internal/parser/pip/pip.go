@@ -31,15 +31,10 @@ var flagsWithValue = map[string]bool{
 }
 
 var unparsedValueFlags = map[string]bool{
-	"-i":                true,
-	"--index-url":       true,
-	"--extra-index-url": true,
-	"-c":                true,
-	"--constraint":      true,
-	"-f":                true,
-	"--find-links":      true,
-	"-r":                true,
-	"--requirement":     true,
+	"-c":            true,
+	"--constraint":  true,
+	"-r":            true,
+	"--requirement": true,
 }
 
 var rangeOperators = []string{">=", "~=", "!=", "<=", ">", "<"}

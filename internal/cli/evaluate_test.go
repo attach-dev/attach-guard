@@ -449,6 +449,35 @@ func TestEvaluate_MixedParsedAndUnparsedArgsForceAsk(t *testing.T) {
 	}
 }
 
+func TestEvaluate_PipIndexConfigurationDoesNotForceAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.32.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.31.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "pip install requests --index-url https://custom.pypi.org/simple", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "pip install requests==2.31.0 --index-url https://custom.pypi.org/simple" {
+		t.Fatalf("unexpected rewritten command: %q", result.RewrittenCommand)
+	}
+}
+
 func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Policy.AutoRewriteUnpinned.Local = true

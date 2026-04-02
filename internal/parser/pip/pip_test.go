@@ -24,6 +24,8 @@ func TestParse(t *testing.T) {
 		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true},
 		{"range deferred", []string{"pip", "install", "requests>=2.0"}, false, "pip", 0, "", "", false, true},
 		{"extras deferred", []string{"pip", "install", "requests[security]"}, false, "pip", 0, "", "", false, true},
+		{"index url does not force unparsed", []string{"pip", "install", "flask", "--index-url", "https://custom.pypi.org/simple"}, false, "pip", 1, "flask", "", false, false},
+		{"find links does not force unparsed", []string{"pip", "install", "flask", "--find-links", "https://example.com/simple"}, false, "pip", 1, "flask", "", false, false},
 		{"known flag value not package", []string{"pip", "install", "flask", "--target", "/tmp"}, false, "pip", 1, "flask", "", false, false},
 		{"unknown flag safety", []string{"pip", "install", "flask", "--mystery", "/tmp"}, false, "pip", 1, "flask", "", false, true},
 		{"not install", []string{"pip", "--version"}, true, "", 0, "", "", false, false},
