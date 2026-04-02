@@ -269,25 +269,26 @@ func TestListOrderedVersionsGo_TreatsProxy404AsUnsupportedSource(t *testing.T) {
 
 func TestGetScoreByPurl_ParsesNDJSON(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", req.Method)
-		}
-		if req.URL.Path != "/v0/purl" {
-			t.Fatalf("unexpected path %q", req.URL.Path)
-		}
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			var payload purlRequest
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decoding request body: %v", err)
+			}
+			if len(payload.Components) != 1 || payload.Components[0].PURL != "pkg:pypi/litellm@1.82.8" {
+				t.Fatalf("components = %#v, want single litellm purl", payload.Components)
+			}
 
-		var payload purlRequest
-		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-			t.Fatalf("decoding request body: %v", err)
+			return newHTTPResponse(http.StatusOK, strings.Join([]string{
+				`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+				`{"_type":"summary"}`,
+			}, "\n")), nil
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{"releases":{"1.82.8":[{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
 		}
-		if len(payload.Components) != 1 || payload.Components[0].PURL != "pkg:pypi/litellm@1.82.8" {
-			t.Fatalf("components = %#v, want single litellm purl", payload.Components)
-		}
-
-		return newHTTPResponse(http.StatusOK, strings.Join([]string{
-			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
-			`{"_type":"summary"}`,
-		}, "\n")), nil
 	})
 
 	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
@@ -307,13 +308,18 @@ func TestGetScoreByPurl_ParsesNDJSON(t *testing.T) {
 
 func TestGetScoreByPurl_AggregatesWorstCaseAcrossArtifacts(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/v0/purl" {
-			t.Fatalf("unexpected path %q", req.URL.Path)
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, strings.Join([]string{
+				`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"sdist","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+				`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"wheel","score":{"supplyChain":0.20,"overall":0.40},"alerts":[{"type":"native-code","severity":"medium","category":"quality"},{"type":"malware","severity":"high","category":"supply-chain"}]}`,
+			}, "\n")), nil
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{"releases":{"1.82.8":[{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
 		}
-		return newHTTPResponse(http.StatusOK, strings.Join([]string{
-			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"sdist","score":{"supplyChain":0.73,"overall":0.81},"alerts":[{"type":"malware","severity":"high","category":"supply-chain"}]}`,
-			`{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","release":"wheel","score":{"supplyChain":0.20,"overall":0.40},"alerts":[{"type":"native-code","severity":"medium","category":"quality"},{"type":"malware","severity":"high","category":"supply-chain"}]}`,
-		}, "\n")), nil
 	})
 
 	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
@@ -344,10 +350,15 @@ func TestGetScoreByPurl_MissingArtifactReturnsUnsupportedSource(t *testing.T) {
 
 func TestGetPackageScorePyPI_UsesPurl(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodPost || req.URL.Path != "/v0/purl" {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81}}`), nil
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{"releases":{"1.82.8":[{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]}}`), nil
+		default:
 			t.Fatalf("unexpected request %s %s", req.Method, req.URL.Path)
+			return nil, nil
 		}
-		return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81}}`), nil
 	})
 
 	info, err := prov.GetPackageScore(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
@@ -356,6 +367,9 @@ func TestGetPackageScorePyPI_UsesPurl(t *testing.T) {
 	}
 	if info.Score.Overall != 81 {
 		t.Fatalf("Overall = %v, want 81", info.Score.Overall)
+	}
+	if info.PublishedAt.IsZero() {
+		t.Fatal("PublishedAt is zero, want registry timestamp")
 	}
 }
 
@@ -419,20 +433,37 @@ func TestListVersionsPyPI_UsesBatchPurlAndCapsCandidates(t *testing.T) {
 	}
 }
 
-func TestBatchScoreByPurl_MissingVersionReturnsUnsupportedSource(t *testing.T) {
+func TestListVersionsPyPI_SkipsMissingBatchResultAndContinues(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path != "/v0/purl" {
-			t.Fatalf("unexpected path %q", req.URL.Path)
+		switch {
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{
+				"releases": {
+					"1.0.2": [{"upload_time_iso_8601":"2024-03-03T00:00:00Z","yanked":false}],
+					"1.0.1": [{"upload_time_iso_8601":"2024-03-02T00:00:00Z","yanked":false}],
+					"1.0.0": [{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]
+				}
+			}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, strings.Join([]string{
+				`{"inputPurl":"pkg:pypi/demo@1.0.1","version":"1.0.1","score":{"supplyChain":0.90,"overall":0.80}}`,
+				`{"inputPurl":"pkg:pypi/demo@1.0.0","version":"1.0.0","score":{"supplyChain":0.85,"overall":0.75}}`,
+			}, "\n")), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
 		}
-		return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:cargo/serde@1.0.200","version":"1.0.200","score":{"supplyChain":0.9,"overall":0.8}}`), nil
 	})
 
-	_, err := prov.batchScoreByPurl(context.Background(), api.EcosystemCargo, "serde", []orderedVersion{
-		{Version: "1.0.200"},
-		{Version: "1.0.201"},
-	})
-	if !errors.Is(err, provider.ErrUnsupportedSource) {
-		t.Fatalf("batchScoreByPurl() error = %v, want ErrUnsupportedSource", err)
+	versions, err := prov.ListVersions(context.Background(), api.EcosystemPyPI, "demo")
+	if err != nil {
+		t.Fatalf("ListVersions() error = %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("len(versions) = %d, want 2 scored fallback versions", len(versions))
+	}
+	if versions[0].Version != "1.0.1" || versions[1].Version != "1.0.0" {
+		t.Fatalf("versions = %#v, want [1.0.1 1.0.0]", versions)
 	}
 }
 
@@ -447,6 +478,58 @@ func TestGetPackageScoreGo_TreatsMissingPurlResultAsUnsupportedSource(t *testing
 	_, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")
 	if !errors.Is(err, provider.ErrUnsupportedSource) {
 		t.Fatalf("GetPackageScore() error = %v, want ErrUnsupportedSource", err)
+	}
+}
+
+func TestGetPackageScoreGo_HydratesPublishedAtFromRegistry(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:golang/example.com/mod@v1.2.3","version":"v1.2.3","score":{"supplyChain":0.9,"overall":0.8}}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/example.com/mod/@v/v1.2.3.info":
+			return newHTTPResponse(http.StatusOK, `{"Version":"v1.2.3","Time":"2024-03-01T00:00:00Z"}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	info, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "example.com/mod", "v1.2.3")
+	if err != nil {
+		t.Fatalf("GetPackageScore() error = %v", err)
+	}
+	if info.PublishedAt.IsZero() {
+		t.Fatal("PublishedAt is zero, want registry timestamp")
+	}
+}
+
+func TestGetPackageScoreCargo_HydratesPublishedAtFromRegistry(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `{"inputPurl":"pkg:cargo/serde@1.0.200","version":"1.0.200","score":{"supplyChain":0.9,"overall":0.8}}`), nil
+		case req.Method == http.MethodGet && req.URL.Host == "crates.io":
+			return newHTTPResponse(http.StatusOK, `{
+				"versions": [
+					{"num":"1.0.200","created_at":"2024-03-01T00:00:00Z","yanked":false}
+				]
+			}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	info, err := prov.GetPackageScore(context.Background(), api.EcosystemCargo, "serde", "1.0.200")
+	if err != nil {
+		t.Fatalf("GetPackageScore() error = %v", err)
+	}
+	if info.PublishedAt.IsZero() {
+		t.Fatal("PublishedAt is zero, want registry timestamp")
 	}
 }
 

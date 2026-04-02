@@ -168,6 +168,16 @@ func (p *Provider) getScoreByPurl(ctx context.Context, ecosystem api.Ecosystem, 
 	if !ok {
 		return nil, provider.ErrUnsupportedSource
 	}
+
+	meta, err := p.lookupVersionMetadata(ctx, ecosystem, name, version)
+	if err != nil {
+		return nil, err
+	}
+	if !meta.PublishedAt.IsZero() {
+		info.PublishedAt = meta.PublishedAt
+	}
+	info.Deprecated = meta.Deprecated
+
 	return info, nil
 }
 
@@ -201,13 +211,16 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 		for _, entry := range ordered[:limit] {
 			info, ok := scored[entry.Version]
 			if !ok {
-				return nil, provider.ErrUnsupportedSource
+				continue
 			}
 			if info.PublishedAt.IsZero() && !entry.PublishedAt.IsZero() {
 				info.PublishedAt = entry.PublishedAt
 			}
 			info.Deprecated = entry.Deprecated
 			versions = append(versions, *info)
+		}
+		if len(versions) == 0 {
+			return nil, provider.ErrUnsupportedSource
 		}
 		return versions, nil
 	}
@@ -268,13 +281,20 @@ func (p *Provider) batchScoreByPurl(ctx context.Context, ecosystem api.Ecosystem
 		return nil, fmt.Errorf("parsing purl batch response for %s: %w", name, err)
 	}
 
-	for _, version := range versions {
-		if _, ok := infos[version.Version]; !ok {
-			return nil, provider.ErrUnsupportedSource
-		}
-	}
-
 	return infos, nil
+}
+
+func (p *Provider) lookupVersionMetadata(ctx context.Context, ecosystem api.Ecosystem, name, version string) (orderedVersion, error) {
+	switch ecosystem {
+	case api.EcosystemPyPI:
+		return p.lookupVersionMetadataPyPI(ctx, name, version)
+	case api.EcosystemGo:
+		return p.lookupVersionMetadataGo(ctx, name, version)
+	case api.EcosystemCargo:
+		return p.lookupVersionMetadataCargo(ctx, name, version)
+	default:
+		return orderedVersion{}, fmt.Errorf("unsupported ecosystem %q", ecosystem)
+	}
 }
 
 func (p *Provider) listOrderedVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]orderedVersion, error) {
@@ -319,6 +339,41 @@ func (p *Provider) listOrderedVersionsPyPI(ctx context.Context, name string) ([]
 	}
 
 	return orderedPyPIReleases(reg.Releases), nil
+}
+
+func (p *Provider) lookupVersionMetadataPyPI(ctx context.Context, name, version string) (orderedVersion, error) {
+	registryURL := fmt.Sprintf("https://pypi.org/pypi/%s/json", name)
+	body, err := p.doGetPublic(ctx, registryURL)
+	if err != nil {
+		return orderedVersion{}, fmt.Errorf("fetching metadata for %s@%s from pypi: %w", name, version, err)
+	}
+
+	var reg pypiRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return orderedVersion{}, fmt.Errorf("parsing pypi response for %s: %w", name, err)
+	}
+
+	files, ok := reg.Releases[version]
+	if !ok || len(files) == 0 {
+		return orderedVersion{}, provider.ErrUnsupportedSource
+	}
+
+	var publishedAt time.Time
+	deprecated := true
+	for _, file := range files {
+		if ts, ok := parsePyPITimestamp(file.UploadTimeISO8601); ok && ts.After(publishedAt) {
+			publishedAt = ts
+		}
+		if !file.Yanked {
+			deprecated = false
+		}
+	}
+
+	return orderedVersion{
+		Version:     version,
+		PublishedAt: publishedAt,
+		Deprecated:  deprecated,
+	}, nil
 }
 
 func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]orderedVersion, error) {
@@ -396,6 +451,33 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 	return filtered, nil
 }
 
+func (p *Provider) lookupVersionMetadataGo(ctx context.Context, name, version string) (orderedVersion, error) {
+	if !goModuleUsesPublicSources(name) {
+		return orderedVersion{}, provider.ErrUnsupportedSource
+	}
+
+	escaped := escapeModulePath(name)
+	infoURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.info", escaped, version)
+	infoBody, err := p.doGetPublic(ctx, infoURL)
+	if err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && (statusErr.statusCode == http.StatusNotFound || statusErr.statusCode == http.StatusGone) {
+			return orderedVersion{}, provider.ErrUnsupportedSource
+		}
+		return orderedVersion{}, fmt.Errorf("fetching metadata for %s@%s from go proxy: %w", name, version, err)
+	}
+
+	var info goProxyVersionInfo
+	if err := json.Unmarshal(infoBody, &info); err != nil {
+		return orderedVersion{}, fmt.Errorf("parsing go proxy metadata for %s@%s: %w", name, version, err)
+	}
+
+	return orderedVersion{
+		Version:     info.Version,
+		PublishedAt: info.Time,
+	}, nil
+}
+
 func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([]orderedVersion, error) {
 	registryURL := fmt.Sprintf("https://crates.io/api/v1/crates/%s", name)
 	body, err := p.doGetPublicWithHeaders(ctx, registryURL, map[string]string{
@@ -420,6 +502,34 @@ func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([
 	}
 
 	return orderCargoVersions(ordered), nil
+}
+
+func (p *Provider) lookupVersionMetadataCargo(ctx context.Context, name, version string) (orderedVersion, error) {
+	registryURL := fmt.Sprintf("https://crates.io/api/v1/crates/%s", name)
+	body, err := p.doGetPublicWithHeaders(ctx, registryURL, map[string]string{
+		"User-Agent": cratesUserAgent,
+	})
+	if err != nil {
+		return orderedVersion{}, fmt.Errorf("fetching metadata for %s@%s from crates.io: %w", name, version, err)
+	}
+
+	var reg cargoRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return orderedVersion{}, fmt.Errorf("parsing crates.io response for %s: %w", name, err)
+	}
+
+	for _, candidate := range reg.Versions {
+		if candidate.Num != version {
+			continue
+		}
+		return orderedVersion{
+			Version:     candidate.Num,
+			PublishedAt: candidate.CreatedAt,
+			Deprecated:  candidate.Yanked,
+		}, nil
+	}
+
+	return orderedVersion{}, provider.ErrUnsupportedSource
 }
 
 // doGetPublic makes a GET request without auth (for public registries).
