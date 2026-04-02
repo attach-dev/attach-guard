@@ -82,3 +82,86 @@ func TestExplainSkillQuotesPluginRoot(t *testing.T) {
 		t.Fatalf("skill example does not use $ARGUMENTS for package name substitution")
 	}
 }
+
+func TestBootstrapMapsSocketTokenFromClaudeUserConfig(t *testing.T) {
+	bootstrap, err := os.ReadFile(filepath.Join("hooks", "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		envName string
+	}{
+		{
+			name:    "manifest key casing",
+			envName: "CLAUDE_PLUGIN_OPTION_socket_api_token",
+		},
+		{
+			name:    "uppercase fallback",
+			envName: "CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			hooksDir := filepath.Join(root, "hooks")
+			binDir := filepath.Join(hooksDir, "bin")
+			if err := os.MkdirAll(binDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			bootstrapPath := filepath.Join(hooksDir, "bootstrap.sh")
+			if err := os.WriteFile(bootstrapPath, bootstrap, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			stub := "#!/usr/bin/env bash\nprintf '%s\\n' \"${SOCKET_API_TOKEN:-}\" \"$1\"\n"
+			for _, binaryName := range []string{
+				"attach-guard-darwin-amd64",
+				"attach-guard-darwin-arm64",
+				"attach-guard-linux-amd64",
+				"attach-guard-linux-arm64",
+			} {
+				binaryPath := filepath.Join(binDir, binaryName)
+				if err := os.WriteFile(binaryPath, []byte(stub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			cmd := exec.Command(bootstrapPath, "version")
+			cmd.Env = append(testEnvWithoutSocket(), tc.envName+"=token-from-plugin")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("bootstrap failed: %v\n%s", err, out)
+			}
+
+			lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("unexpected bootstrap output: %q", out)
+			}
+			if lines[0] != "token-from-plugin" {
+				t.Fatalf("expected mapped token, got %q", lines[0])
+			}
+			if lines[1] != "version" {
+				t.Fatalf("expected forwarded arg, got %q", lines[1])
+			}
+		})
+	}
+}
+
+func testEnvWithoutSocket() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "SOCKET_API_TOKEN=") {
+			continue
+		}
+		if strings.HasPrefix(entry, "CLAUDE_PLUGIN_OPTION_socket_api_token=") {
+			continue
+		}
+		if strings.HasPrefix(entry, "CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
+}

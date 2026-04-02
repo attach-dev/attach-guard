@@ -77,9 +77,9 @@ Or from within a Claude Code session:
 /plugin install attach-guard@attach-dev
 ```
 
-During installation, Claude Code will prompt for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev).
+During installation or enablement, Claude Code will prompt for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev).
 
-> **If the token prompt didn't appear**, re-trigger it with:
+> **If the install/enable prompt didn't appear**, re-trigger it with:
 > ```bash
 > claude plugin disable attach-guard@attach-dev && claude plugin enable attach-guard@attach-dev
 > ```
@@ -102,6 +102,8 @@ claude --plugin-dir ./plugin
 ```
 
 The binary auto-builds from source on the first `/explain` invocation.
+
+Local `claude --plugin-dir ./plugin` development may not run the marketplace install/enable config flow. If Claude does not inject the plugin config in this mode, export `SOCKET_API_TOKEN` manually before starting Claude Code.
 
 ### Manual Installation
 

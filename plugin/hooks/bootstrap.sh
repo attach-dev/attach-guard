@@ -146,9 +146,16 @@ fi
 
 export ATTACH_GUARD_PLUGIN_CONFIG_DIR="${PLUGIN_ROOT}/config"
 
-# Map plugin userConfig token to the env var the binary expects, if not already set
-if [[ -z "${SOCKET_API_TOKEN:-}" && -n "${CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN:-}" ]]; then
-  export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN"
+# Map plugin userConfig token to the env var the binary expects, if not already set.
+# Claude documents sensitive userConfig values as CLAUDE_PLUGIN_OPTION_<KEY>;
+# accept the manifest key form directly and keep the uppercase variant as a
+# fallback for compatibility with older/local setups.
+if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
+  if [[ -n "${CLAUDE_PLUGIN_OPTION_socket_api_token:-}" ]]; then
+    export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_socket_api_token"
+  elif [[ -n "${CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN:-}" ]]; then
+    export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN"
+  fi
 fi
 
 # Require a Socket API token — without it, every lookup returns "provider unavailable"
