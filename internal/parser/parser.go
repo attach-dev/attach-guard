@@ -628,18 +628,19 @@ func goProxyUsesPublicRegistryValue(raw string) bool {
 
 func classifyPipSourceOverride(raw string) (local bool, nonLocal bool) {
 	for _, candidate := range strings.Fields(raw) {
-		local, nonLocal = parseutil.ClassifyPipLocation(candidate)
-		if nonLocal {
+		candidateLocal, candidateNonLocal := parseutil.ClassifyPipLocation(candidate)
+		if candidateNonLocal {
 			return false, true
 		}
-		if local {
-			return true, false
+		if candidateLocal {
+			local = true
+			continue
 		}
 		if strings.TrimSpace(candidate) != "" {
 			return false, true
 		}
 	}
-	return false, false
+	return local, false
 }
 
 // commandSegments splits tokens at shell operators into separate command segments.

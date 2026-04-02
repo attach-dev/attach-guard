@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -193,7 +194,7 @@ func TestListOrderedVersionsGo_LimitsInfoFetchesToCandidateCap(t *testing.T) {
 
 	var (
 		listBody    strings.Builder
-		infoFetches int
+		infoFetches int32
 	)
 	for i := 0; i < 15; i++ {
 		if i > 0 {
@@ -208,7 +209,7 @@ func TestListOrderedVersionsGo_LimitsInfoFetchesToCandidateCap(t *testing.T) {
 			return newHTTPResponse(http.StatusOK, listBody.String()), nil
 		default:
 			if strings.HasPrefix(req.URL.Path, "/example.com/mod/@v/") && strings.HasSuffix(req.URL.Path, ".info") {
-				infoFetches++
+				atomic.AddInt32(&infoFetches, 1)
 				version := strings.TrimPrefix(req.URL.Path, "/example.com/mod/@v/")
 				version = strings.TrimSuffix(version, ".info")
 				return newHTTPResponse(http.StatusOK, fmt.Sprintf(`{"Version":"%s","Time":"2024-01-01T00:00:00Z"}`, version)), nil
@@ -225,8 +226,8 @@ func TestListOrderedVersionsGo_LimitsInfoFetchesToCandidateCap(t *testing.T) {
 	if len(ordered) != maxCandidates {
 		t.Fatalf("len(ordered) = %d, want %d", len(ordered), maxCandidates)
 	}
-	if infoFetches != maxCandidates {
-		t.Fatalf("info fetches = %d, want %d", infoFetches, maxCandidates)
+	if got := atomic.LoadInt32(&infoFetches); got != int32(maxCandidates) {
+		t.Fatalf("info fetches = %d, want %d", got, maxCandidates)
 	}
 }
 
@@ -245,6 +246,20 @@ func TestListOrderedVersionsGo_TreatsProxy404AsUnsupportedSource(t *testing.T) {
 	_, err := prov.listOrderedVersionsGo(context.Background(), "private.example.com/mod")
 	if !errors.Is(err, provider.ErrUnsupportedSource) {
 		t.Fatalf("listOrderedVersionsGo() error = %v, want ErrUnsupportedSource", err)
+	}
+}
+
+func TestGetPackageScoreGo_TreatsSocket404AsUnsupportedSource(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/v0/go/private.example.com/mod/v1.2.3/score" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusNotFound, "not found"), nil
+	})
+
+	_, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")
+	if !errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatalf("GetPackageScore() error = %v, want ErrUnsupportedSource", err)
 	}
 }
 

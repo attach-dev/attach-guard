@@ -91,6 +91,12 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 
 	body, err := p.doGet(ctx, url)
 	if err != nil {
+		if ecosystem == api.EcosystemGo {
+			var statusErr *httpStatusError
+			if errors.As(err, &statusErr) && (statusErr.statusCode == http.StatusNotFound || statusErr.statusCode == http.StatusGone) {
+				return nil, provider.ErrUnsupportedSource
+			}
+		}
 		return nil, fmt.Errorf("fetching score for %s@%s: %w", name, version, err)
 	}
 
@@ -369,7 +375,7 @@ func (p *Provider) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
 	return body, nil
