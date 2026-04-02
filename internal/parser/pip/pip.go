@@ -96,6 +96,34 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		}
 		if strings.HasPrefix(tok, "-") {
 			preActionFlags = append(preActionFlags, tok)
+			if name, value, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+				if booleanFlags[name] {
+					continue
+				}
+				if nonLocalBooleanFlags[name] {
+					hasUnparsed = true
+					hasNonLocalUnparsed = true
+					disqualify = true
+					continue
+				}
+				if flagsWithValue[name] {
+					if nonLocalSourceValueFlags[name] {
+						hasUnparsed = true
+						hasNonLocalUnparsed = true
+						disqualify = true
+					}
+					if classifiedSourceValueFlags[name] {
+						if local, nonLocal := parseutil.ClassifyPipLocation(value); local || nonLocal {
+							hasUnparsed = true
+							if nonLocal {
+								hasNonLocalUnparsed = true
+							}
+							disqualify = true
+						}
+					}
+					continue
+				}
+			}
 			if booleanFlags[tok] {
 				continue
 			}
@@ -160,6 +188,41 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		tok := tokens[i]
 		if strings.HasPrefix(tok, "-") {
 			cmd.Flags = append(cmd.Flags, tok)
+			if name, value, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+				if booleanFlags[name] {
+					continue
+				}
+				if nonLocalBooleanFlags[name] {
+					disqualify = true
+					cmd.HasUnparsedArgs = true
+					cmd.HasNonLocalUnparsedArgs = true
+					cmd.Packages = nil
+					continue
+				}
+				if flagsWithValue[name] {
+					if nonLocalSourceValueFlags[name] {
+						disqualify = true
+						cmd.HasUnparsedArgs = true
+						cmd.HasNonLocalUnparsedArgs = true
+						cmd.Packages = nil
+					}
+					if classifiedSourceValueFlags[name] {
+						if local, nonLocal := parseutil.ClassifyPipLocation(value); local || nonLocal {
+							disqualify = true
+							cmd.HasUnparsedArgs = true
+							cmd.Packages = nil
+							if nonLocal {
+								cmd.HasNonLocalUnparsedArgs = true
+							}
+						}
+					}
+					if unparsedValueFlags[name] {
+						cmd.HasUnparsedArgs = true
+						cmd.HasNonLocalUnparsedArgs = true
+					}
+					continue
+				}
+			}
 			if booleanFlags[tok] {
 				continue
 			}
@@ -221,8 +284,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 }
 
 func isUnknownLongFlag(flag string) bool {
+	if name, _, ok := parseutil.SplitLongFlagAssignment(flag); ok {
+		flag = name
+	}
 	return strings.HasPrefix(flag, "--") &&
-		!strings.Contains(flag, "=") &&
 		!flagsWithValue[flag] &&
 		!booleanFlags[flag] &&
 		!nonLocalBooleanFlags[flag]

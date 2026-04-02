@@ -20,6 +20,8 @@ func TestParse(t *testing.T) {
 		{"bare install", []string{"pip", "install"}, false, "pip", 0, "", "", false, false, false},
 		{"unknown pre action flag safety", []string{"pip", "--mystery", "/tmp", "install", "flask"}, false, "pip", 0, "", "", false, true, true},
 		{"pre action proxy", []string{"pip", "--proxy", "http://proxy.example", "install", "flask"}, false, "pip", 0, "", "", false, true, true},
+		{"post action index assignment", []string{"pip", "install", "flask", "--index-url=https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true, true},
+		{"post action requirement assignment", []string{"pip", "install", "--requirement=requirements.txt"}, false, "pip", 0, "", "", false, true, true},
 		{"skip local path", []string{"pip", "install", "."}, false, "pip", 0, "", "", false, true, false},
 		{"skip relative wheel path", []string{"pip", "install", "dist/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
 		{"skip file url", []string{"pip", "install", "file:///tmp/pkg.whl"}, false, "pip", 0, "", "", false, true, false},
@@ -35,7 +37,9 @@ func TestParse(t *testing.T) {
 		{"extra index disqualifies public lookup", []string{"pip", "install", "flask", "--extra-index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true, true},
 		{"find links disqualifies public lookup", []string{"pip", "install", "flask", "--find-links", "https://example.com/simple"}, false, "pip", 0, "", "", false, true, true},
 		{"known flag value not package", []string{"pip", "install", "flask", "--target", "/tmp"}, false, "pip", 1, "flask", "", false, false, false},
+		{"known flag assignment not package", []string{"pip", "install", "flask", "--target=/tmp"}, false, "pip", 1, "flask", "", false, false, false},
 		{"unknown flag safety", []string{"pip", "install", "flask", "--mystery", "/tmp"}, false, "pip", 0, "", "", false, true, true},
+		{"unknown flag assignment safety", []string{"pip", "install", "flask", "--mystery=/tmp"}, false, "pip", 0, "", "", false, true, true},
 		{"not install", []string{"pip", "--version"}, true, "", 0, "", "", false, false, false},
 	}
 

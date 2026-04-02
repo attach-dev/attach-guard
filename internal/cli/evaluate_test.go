@@ -428,10 +428,13 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		"pip install requests>=2.0",
 		"pip install requests[security]",
 		"pip install requests --index-url https://custom.pypi.org/simple",
+		"pip install requests --index-url=https://custom.pypi.org/simple",
 		"pip install requests --extra-index-url https://custom.pypi.org/simple",
+		"pip install --requirement=requirements.txt",
 		"PIP_INDEX_URL=https://private.example/simple pip install requests",
 		"cargo add --git https://github.com/user/repo",
 		"cargo add serde --registry internal",
+		"cargo add serde --registry=internal",
 		"cargo add serde@1.0.200",
 		"go get golang.org/x/net@upgrade",
 		"GOPRIVATE=private.example.com go get private.example.com/mod",
@@ -469,7 +472,9 @@ func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
 
 	tests := []string{
 		"pip install --upgrade flask",
+		"pip install flask --target=/tmp",
 		"cargo --color always add serde",
+		"cargo --color=always add serde",
 		"cargo add --optional serde",
 	}
 

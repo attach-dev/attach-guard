@@ -3,11 +3,13 @@ package socket
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
 	"time"
 
+	"github.com/attach-dev/attach-guard/internal/provider"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
@@ -179,6 +181,24 @@ func TestListOrderedVersionsGo_ParsesProxyResponses(t *testing.T) {
 	}
 	if ordered[0].Version != "v1.1.0" || ordered[1].Version != "v1.0.0" {
 		t.Fatalf("ordered versions = %#v, want [v1.1.0 v1.0.0]", ordered)
+	}
+}
+
+func TestListOrderedVersionsGo_TreatsProxy404AsUnsupportedSource(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Path != "/private.example.com/mod/@v/list" {
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+		return newHTTPResponse(http.StatusNotFound, "not found"), nil
+	})
+
+	_, err := prov.listOrderedVersionsGo(context.Background(), "private.example.com/mod")
+	if !errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatalf("listOrderedVersionsGo() error = %v, want ErrUnsupportedSource", err)
 	}
 }
 

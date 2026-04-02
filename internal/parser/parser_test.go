@@ -446,6 +446,7 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 	}{
 		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false, false},
 		{"pip pre action proxy deferred", "pip --proxy http://proxy.example install requests", "pip", 0, "", "", false, true, true},
+		{"pip assignment source deferred", "pip install requests --index-url=https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
 		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, false},
 		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
@@ -457,8 +458,10 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"go inline private env deferred", "GOPRIVATE=private.example.com go get private.example.com/mod", "go", 0, "", "", false, true, true},
 		{"cargo exact", "cargo add serde@=1.0.200", "cargo", 1, "serde", "1.0.200", true, false, false},
 		{"cargo optional boolean flag", "cargo add --optional serde", "cargo", 1, "serde", "", false, false, false},
+		{"cargo pre action color assignment", "cargo --color=always add serde", "cargo", 1, "serde", "", false, false, false},
 		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true, true},
 		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true, true},
+		{"cargo custom registry assignment deferred", "cargo add serde --registry=internal", "cargo", 0, "", "", false, true, true},
 	}
 
 	for _, tt := range tests {

@@ -4,6 +4,7 @@ package socket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,15 @@ const (
 type Provider struct {
 	apiToken   string
 	httpClient *http.Client
+}
+
+type httpStatusError struct {
+	statusCode int
+	body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("registry returned status %d: %s", e.statusCode, e.body)
 }
 
 // New creates a new Socket provider using the given env var for the API token.
@@ -217,6 +227,10 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 	registryURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/list", escaped)
 	body, err := p.doGetPublic(ctx, registryURL)
 	if err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && (statusErr.statusCode == http.StatusNotFound || statusErr.statusCode == http.StatusGone) {
+			return nil, provider.ErrUnsupportedSource
+		}
 		return nil, fmt.Errorf("fetching versions for %s from go proxy: %w", name, err)
 	}
 
@@ -310,7 +324,7 @@ func (p *Provider) doGetPublicWithHeaders(ctx context.Context, url string, heade
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned status %d: %s", resp.StatusCode, string(body))
+		return nil, &httpStatusError{statusCode: resp.StatusCode, body: string(body)}
 	}
 
 	return body, nil

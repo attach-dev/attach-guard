@@ -24,6 +24,18 @@ func ShouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, st
 	return !strings.HasPrefix(next, "-")
 }
 
+// SplitLongFlagAssignment splits --flag=value into its flag name and value.
+func SplitLongFlagAssignment(flag string) (name, value string, ok bool) {
+	if !strings.HasPrefix(flag, "--") {
+		return "", "", false
+	}
+	name, value, ok = strings.Cut(flag, "=")
+	if !ok || name == "" {
+		return "", "", false
+	}
+	return name, value, true
+}
+
 // ClassifyPipLocation classifies pip location-like arguments as local or
 // non-local so parsers can preserve the allow-vs-ask split for skipped inputs.
 func ClassifyPipLocation(raw string) (local bool, nonLocal bool) {

@@ -71,6 +71,14 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		}
 		if strings.HasPrefix(tok, "-") {
 			preActionFlags = append(preActionFlags, tok)
+			if name, _, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+				if booleanFlags[name] {
+					continue
+				}
+				if preActionFlagsWithValue[name] {
+					continue
+				}
+			}
 			if booleanFlags[tok] {
 				continue
 			}
@@ -113,6 +121,25 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		tok := tokens[i]
 		if strings.HasPrefix(tok, "-") {
 			cmd.Flags = append(cmd.Flags, tok)
+			if name, _, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+				if booleanFlags[name] {
+					continue
+				}
+				if flagsWithValue[name] {
+					if name == "--git" || name == "--registry" {
+						disqualify = true
+						cmd.HasUnparsedArgs = true
+						cmd.HasNonLocalUnparsedArgs = true
+						cmd.Packages = nil
+					}
+					if name == "--path" {
+						disqualify = true
+						cmd.HasUnparsedArgs = true
+						cmd.Packages = nil
+					}
+					continue
+				}
+			}
 			if booleanFlags[tok] {
 				continue
 			}
@@ -156,8 +183,10 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 }
 
 func isUnknownLongFlag(flag string) bool {
+	if name, _, ok := parseutil.SplitLongFlagAssignment(flag); ok {
+		flag = name
+	}
 	return strings.HasPrefix(flag, "--") &&
-		!strings.Contains(flag, "=") &&
 		!flagsWithValue[flag] &&
 		!booleanFlags[flag]
 }
