@@ -351,6 +351,9 @@ func TestLooksLikeInstall(t *testing.T) {
 		"/opt/bin/mystery npm install lodash",
 		"strace npm install axios",
 		"nohup npm install axios",
+		"strace pip --proxy http://proxy.example install flask",
+		"strace pip -i https://custom.example/simple install flask",
+		"strace cargo --color always add serde",
 		"watch pnpm add react",
 		"strace bash -c 'npm install axios'",
 		"ltrace sh -c 'pnpm add react'",
@@ -442,9 +445,12 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		wantNonLocal bool
 	}{
 		{"pip basic", "pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"pip pre action proxy deferred", "pip --proxy http://proxy.example install requests", "pip", 0, "", "", false, true, true},
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
+		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, false},
 		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
 		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
+		{"pip inline local find links env", "PIP_FIND_LINKS=./dist pip install flask", "pip", 0, "", "", false, true, false},
 		{"pip inline source env deferred", "PIP_INDEX_URL=https://private.example/simple pip install requests", "pip", 0, "", "", false, true, true},
 		{"go exact", "go get golang.org/x/net@v0.25.0", "go", 1, "golang.org/x/net", "v0.25.0", true, false, false},
 		{"go deferred local", "go get ./...", "go", 0, "", "", false, true, false},

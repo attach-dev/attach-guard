@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/attach-dev/attach-guard/internal/parser/parseutil"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
@@ -28,14 +29,19 @@ var flagsWithValue = map[string]bool{
 	"--target":          true,
 	"--root":            true,
 	"--prefix":          true,
+	"--proxy":           true,
 }
 
-var sourceValueFlags = map[string]bool{
+var nonLocalSourceValueFlags = map[string]bool{
 	"-i":                true,
 	"--index-url":       true,
 	"--extra-index-url": true,
-	"-f":                true,
-	"--find-links":      true,
+	"--proxy":           true,
+}
+
+var classifiedSourceValueFlags = map[string]bool{
+	"-f":           true,
+	"--find-links": true,
 }
 
 var booleanFlags = map[string]bool{
@@ -62,15 +68,6 @@ var unparsedValueFlags = map[string]bool{
 }
 
 var rangeOperators = []string{">=", "~=", "!=", "<=", ">", "<"}
-
-var localArchiveSuffixes = []string{
-	".whl",
-	".zip",
-	".tar.gz",
-	".tgz",
-	".tar.bz2",
-	".tar.xz",
-}
 
 // Parse attempts to parse direct pip/pip3 install commands.
 // Unlike npm/pnpm parsing, recognized commands may return a ParsedCommand with
@@ -111,11 +108,28 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
-				if sourceValueFlags[tok] {
+				if nonLocalSourceValueFlags[tok] {
 					hasUnparsed = true
 					hasNonLocalUnparsed = true
 					disqualify = true
 				}
+				if classifiedSourceValueFlags[tok] {
+					if local, nonLocal := parseutil.ClassifyPipLocation(tokens[i]); local || nonLocal {
+						hasUnparsed = true
+						if nonLocal {
+							hasNonLocalUnparsed = true
+						}
+						disqualify = true
+					}
+				}
+				continue
+			}
+			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "install") {
+				hasUnparsed = true
+				hasNonLocalUnparsed = true
+				disqualify = true
+				i++
+				preActionFlags = append(preActionFlags, tokens[i])
 				continue
 			}
 			if isUnknownLongFlag(tok) {
@@ -159,11 +173,21 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if flagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				cmd.Flags = append(cmd.Flags, tokens[i])
-				if sourceValueFlags[tok] {
+				if nonLocalSourceValueFlags[tok] {
 					disqualify = true
 					cmd.HasUnparsedArgs = true
 					cmd.HasNonLocalUnparsedArgs = true
 					cmd.Packages = nil
+				}
+				if classifiedSourceValueFlags[tok] {
+					if local, nonLocal := parseutil.ClassifyPipLocation(tokens[i]); local || nonLocal {
+						disqualify = true
+						cmd.HasUnparsedArgs = true
+						cmd.Packages = nil
+						if nonLocal {
+							cmd.HasNonLocalUnparsedArgs = true
+						}
+					}
 				}
 				if unparsedValueFlags[tok] {
 					cmd.HasUnparsedArgs = true
@@ -205,25 +229,8 @@ func isUnknownLongFlag(flag string) bool {
 }
 
 func classifySkippedArg(tok string) (local bool, nonLocal bool) {
-	if strings.HasPrefix(tok, "file://") {
-		return true, false
-	}
-	if strings.Contains(tok, "://") {
-		if strings.Contains(tok, "+file://") {
-			return true, false
-		}
-		return false, true
-	}
-	if strings.HasPrefix(tok, ".") || strings.HasPrefix(tok, "/") {
-		return true, false
-	}
-	if strings.Contains(tok, "/") {
-		return true, false
-	}
-	for _, suffix := range localArchiveSuffixes {
-		if strings.HasSuffix(tok, suffix) {
-			return true, false
-		}
+	if local, nonLocal := parseutil.ClassifyPipLocation(tok); local || nonLocal {
+		return local, nonLocal
 	}
 	if strings.Contains(tok, "[") {
 		return false, true

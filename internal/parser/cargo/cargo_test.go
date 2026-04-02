@@ -15,6 +15,8 @@ func TestParse(t *testing.T) {
 		wantNonLocal bool
 	}{
 		{"basic", []string{"cargo", "add", "serde"}, false, 1, "serde", "", false, false, false},
+		{"unknown pre action flag safety", []string{"cargo", "--mystery", "value", "add", "serde"}, false, 0, "", "", false, true, true},
+		{"pre action color", []string{"cargo", "--color", "always", "add", "serde"}, false, 1, "serde", "", false, false, false},
 		{"exact pin", []string{"cargo", "add", "serde@=1.0.200"}, false, 1, "serde", "1.0.200", true, false, false},
 		{"requirement deferred", []string{"cargo", "add", "serde@1.0.200"}, false, 0, "", "", false, true, true},
 		{"git deferred", []string{"cargo", "add", "--git", "https://github.com/user/repo", "serde"}, false, 0, "", "", false, true, true},

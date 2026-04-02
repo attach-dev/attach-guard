@@ -8,6 +8,7 @@ import (
 	"github.com/attach-dev/attach-guard/internal/parser/cargo"
 	"github.com/attach-dev/attach-guard/internal/parser/gomod"
 	"github.com/attach-dev/attach-guard/internal/parser/npm"
+	"github.com/attach-dev/attach-guard/internal/parser/parseutil"
 	"github.com/attach-dev/attach-guard/internal/parser/pip"
 	"github.com/attach-dev/attach-guard/internal/parser/pnpm"
 	"github.com/attach-dev/attach-guard/pkg/api"
@@ -36,12 +37,14 @@ func Parse(rawCommand string) *api.ParsedCommand {
 }
 
 type sourceOverrideContext struct {
+	pipLocal    bool
 	pipNonLocal bool
 	goNonLocal  bool
 }
 
 func (c sourceOverrideContext) merge(other sourceOverrideContext) sourceOverrideContext {
 	return sourceOverrideContext{
+		pipLocal:    c.pipLocal || other.pipLocal,
 		pipNonLocal: c.pipNonLocal || other.pipNonLocal,
 		goNonLocal:  c.goNonLocal || other.goNonLocal,
 	}
@@ -253,6 +256,11 @@ func looksLikeInstallTokens(tokens []string) bool {
 				}
 				if !strings.HasPrefix(tokens[j], "-") {
 					break
+				}
+				if j+1 < len(tokens) &&
+					!strings.HasPrefix(tokens[j+1], "-") &&
+					!installVerbs[tokens[j+1]] {
+					j++
 				}
 			}
 			return false
@@ -551,6 +559,9 @@ func applySourceOverrideContext(cmd *api.ParsedCommand, ctx sourceOverrideContex
 			cmd.Packages = nil
 			cmd.HasUnparsedArgs = true
 			cmd.HasNonLocalUnparsedArgs = true
+		} else if ctx.pipLocal {
+			cmd.Packages = nil
+			cmd.HasUnparsedArgs = true
 		}
 	case "go":
 		if ctx.goNonLocal {
@@ -568,7 +579,19 @@ func recordSourceEnvAssignment(tok string, ctx *sourceOverrideContext) {
 	}
 
 	switch key {
-	case "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "PIP_REQUIREMENT", "PIP_CONSTRAINT", "PIP_NO_INDEX":
+	case "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_PROXY":
+		if local, nonLocal := classifyPipSourceOverride(value); nonLocal {
+			ctx.pipNonLocal = true
+		} else if local {
+			ctx.pipLocal = true
+		}
+	case "PIP_FIND_LINKS":
+		if local, nonLocal := classifyPipSourceOverride(value); nonLocal {
+			ctx.pipNonLocal = true
+		} else if local {
+			ctx.pipLocal = true
+		}
+	case "PIP_REQUIREMENT", "PIP_CONSTRAINT", "PIP_NO_INDEX":
 		if strings.TrimSpace(value) != "" {
 			ctx.pipNonLocal = true
 		}
@@ -602,6 +625,22 @@ func goProxyUsesPublicRegistryValue(raw string) bool {
 	}
 
 	return false
+}
+
+func classifyPipSourceOverride(raw string) (local bool, nonLocal bool) {
+	for _, candidate := range strings.Fields(raw) {
+		local, nonLocal = parseutil.ClassifyPipLocation(candidate)
+		if nonLocal {
+			return false, true
+		}
+		if local {
+			return true, false
+		}
+		if strings.TrimSpace(candidate) != "" {
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // commandSegments splits tokens at shell operators into separate command segments.

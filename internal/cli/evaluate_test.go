@@ -169,6 +169,9 @@ func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
 		"strace npm install axios",
 		"nohup npm install axios",
 		"some-wrapper npm install lodash",
+		"strace pip --proxy http://proxy.example install flask",
+		"strace pip -i https://custom.example/simple install flask",
+		"strace cargo --color always add serde",
 		"strace bash -c 'npm install axios'",
 		"nohup bash -lc 'npm install lodash'",
 	}
@@ -391,6 +394,8 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		"pip install .",
 		"pip install dist/pkg.whl",
 		"pip install file:///tmp/pkg.whl",
+		"pip install --find-links ./dist flask",
+		"PIP_FIND_LINKS=./dist pip install flask",
 		"go get ./...",
 		"cargo add --path ./local-crate",
 		"python -m pip install requests",
@@ -416,6 +421,7 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 	mock := provider.NewMockProvider()
 
 	tests := []string{
+		"pip --proxy http://proxy.example install flask",
 		"pip install -r requirements.txt",
 		"pip install https://github.com/user/repo/archive/main.tar.gz",
 		"pip install git+https://github.com/user/repo.git",
@@ -463,6 +469,7 @@ func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
 
 	tests := []string{
 		"pip install --upgrade flask",
+		"cargo --color always add serde",
 		"cargo add --optional serde",
 	}
 

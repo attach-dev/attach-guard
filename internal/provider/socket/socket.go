@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -21,8 +22,10 @@ import (
 )
 
 const (
-	baseURL        = "https://api.socket.dev/v0"
-	defaultTimeout = 10 * time.Second
+	baseURL                = "https://api.socket.dev/v0"
+	defaultTimeout         = 10 * time.Second
+	cratesUserAgent        = "attach-guard (https://github.com/attach-dev/attach-guard)"
+	goInfoFetchConcurrency = 8
 )
 
 // Provider implements the provider.Provider interface for Socket.dev.
@@ -218,21 +221,38 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 	}
 
 	var ordered []orderedVersion
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, goInfoFetchConcurrency)
+	)
 	for _, version := range strings.Fields(string(body)) {
-		infoURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.info", escaped, version)
-		infoBody, err := p.doGetPublic(ctx, infoURL)
-		if err != nil {
-			continue
-		}
-		var info goProxyVersionInfo
-		if err := json.Unmarshal(infoBody, &info); err != nil {
-			continue
-		}
-		ordered = append(ordered, orderedVersion{
-			Version:     info.Version,
-			PublishedAt: info.Time,
-		})
+		version := version
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			infoURL := fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.info", escaped, version)
+			infoBody, err := p.doGetPublic(ctx, infoURL)
+			if err != nil {
+				return
+			}
+			var info goProxyVersionInfo
+			if err := json.Unmarshal(infoBody, &info); err != nil {
+				return
+			}
+
+			mu.Lock()
+			ordered = append(ordered, orderedVersion{
+				Version:     info.Version,
+				PublishedAt: info.Time,
+			})
+			mu.Unlock()
+		}()
 	}
+	wg.Wait()
 
 	return orderGoVersions(ordered), nil
 }
@@ -240,7 +260,7 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([]orderedVersion, error) {
 	registryURL := fmt.Sprintf("https://crates.io/api/v1/crates/%s", name)
 	body, err := p.doGetPublicWithHeaders(ctx, registryURL, map[string]string{
-		"User-Agent": "attach-guard",
+		"User-Agent": cratesUserAgent,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("fetching versions for %s from crates.io: %w", name, err)
@@ -490,7 +510,7 @@ func orderedPyPIReleases(releases map[string][]pypiFileInfo) []orderedVersion {
 		var publishedAt time.Time
 		deprecated := true
 		for _, file := range files {
-			if ts, err := time.Parse(time.RFC3339, file.UploadTimeISO8601); err == nil && ts.After(publishedAt) {
+			if ts, ok := parsePyPITimestamp(file.UploadTimeISO8601); ok && ts.After(publishedAt) {
 				publishedAt = ts
 			}
 			if !file.Yanked {
@@ -522,6 +542,10 @@ func goProxyUsesPublicRegistry(raw string) bool {
 		return true
 	}
 
+	// Be conservative: only treat public fallback as supported when the first
+	// effective GOPROXY entry is the public proxy. If a private/custom proxy is
+	// first, go will consult it before proxy.golang.org, so public scoring would
+	// not reliably reflect the fetched artifact.
 	for _, entry := range splitGoProxyEntries(raw) {
 		switch entry {
 		case "", "direct", "off":
@@ -534,6 +558,20 @@ func goProxyUsesPublicRegistry(raw string) bool {
 	}
 
 	return false
+}
+
+func parsePyPITimestamp(raw string) (time.Time, bool) {
+	layouts := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
 
 func splitGoProxyEntries(raw string) []string {

@@ -1,11 +1,39 @@
 package socket
 
 import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func newTestProvider(rt roundTripFunc) *Provider {
+	return &Provider{
+		apiToken: "test-token",
+		httpClient: &http.Client{
+			Transport: rt,
+			Timeout:   defaultTimeout,
+		},
+	}
+}
+
+func newHTTPResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewBufferString(body)),
+	}
+}
 
 func TestSocketEcosystem(t *testing.T) {
 	tests := []struct {
@@ -95,6 +123,83 @@ func TestOrderedPyPIReleasesSkipsDeletedVersions(t *testing.T) {
 	}
 	if ordered[0].Version != "0.9.0" {
 		t.Fatalf("ordered version = %q, want 0.9.0", ordered[0].Version)
+	}
+}
+
+func TestListOrderedVersionsPyPI_ParsesRegistryResponse(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "pypi.org" {
+			t.Fatalf("unexpected host %q", req.URL.Host)
+		}
+		return newHTTPResponse(http.StatusOK, `{
+			"releases": {
+				"1.0.0": [{"upload_time_iso_8601":"2024-01-01T00:00:00"}],
+				"1.1.0": [{"upload_time_iso_8601":"2024-02-01T00:00:00Z"}]
+			}
+		}`), nil
+	})
+
+	ordered, err := prov.listOrderedVersionsPyPI(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("listOrderedVersionsPyPI() error = %v", err)
+	}
+	if len(ordered) != 2 {
+		t.Fatalf("len(ordered) = %d, want 2", len(ordered))
+	}
+	if ordered[0].Version != "1.1.0" || ordered[1].Version != "1.0.0" {
+		t.Fatalf("ordered versions = %#v, want [1.1.0 1.0.0]", ordered)
+	}
+}
+
+func TestListOrderedVersionsGo_ParsesProxyResponses(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/example.com/mod/@v/list":
+			return newHTTPResponse(http.StatusOK, "v1.0.0\nv1.1.0\n"), nil
+		case "/example.com/mod/@v/v1.0.0.info":
+			return newHTTPResponse(http.StatusOK, `{"Version":"v1.0.0","Time":"2024-01-01T00:00:00Z"}`), nil
+		case "/example.com/mod/@v/v1.1.0.info":
+			return newHTTPResponse(http.StatusOK, `{"Version":"v1.1.0","Time":"2024-02-01T00:00:00Z"}`), nil
+		default:
+			t.Fatalf("unexpected path %q", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	ordered, err := prov.listOrderedVersionsGo(context.Background(), "example.com/mod")
+	if err != nil {
+		t.Fatalf("listOrderedVersionsGo() error = %v", err)
+	}
+	if len(ordered) != 2 {
+		t.Fatalf("len(ordered) = %d, want 2", len(ordered))
+	}
+	if ordered[0].Version != "v1.1.0" || ordered[1].Version != "v1.0.0" {
+		t.Fatalf("ordered versions = %#v, want [v1.1.0 v1.0.0]", ordered)
+	}
+}
+
+func TestListOrderedVersionsCargo_SetsUserAgent(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		if got := req.Header.Get("User-Agent"); got != cratesUserAgent {
+			t.Fatalf("User-Agent = %q, want %q", got, cratesUserAgent)
+		}
+		return newHTTPResponse(http.StatusOK, `{
+			"versions": [
+				{"num":"1.0.0","created_at":"2024-01-01T00:00:00Z","yanked":false}
+			]
+		}`), nil
+	})
+
+	ordered, err := prov.listOrderedVersionsCargo(context.Background(), "demo")
+	if err != nil {
+		t.Fatalf("listOrderedVersionsCargo() error = %v", err)
+	}
+	if len(ordered) != 1 || ordered[0].Version != "1.0.0" {
+		t.Fatalf("ordered versions = %#v, want [1.0.0]", ordered)
 	}
 }
 

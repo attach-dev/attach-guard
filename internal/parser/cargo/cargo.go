@@ -5,8 +5,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/attach-dev/attach-guard/internal/parser/parseutil"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
+
+var preActionFlagsWithValue = map[string]bool{
+	"--color":  true,
+	"--config": true,
+	"-Z":       true,
+}
 
 var flagsWithValue = map[string]bool{
 	"-F":              true,
@@ -67,16 +74,16 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 			if booleanFlags[tok] {
 				continue
 			}
-			if flagsWithValue[tok] && i+1 < len(tokens) {
+			if preActionFlagsWithValue[tok] && i+1 < len(tokens) {
 				i++
 				preActionFlags = append(preActionFlags, tokens[i])
-				if tok == "--git" || tok == "--registry" {
-					hasUnparsed = true
-					hasNonLocalUnparsed = true
-				}
-				if tok == "--path" {
-					hasUnparsed = true
-				}
+				continue
+			}
+			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "add") {
+				hasUnparsed = true
+				hasNonLocalUnparsed = true
+				i++
+				preActionFlags = append(preActionFlags, tokens[i])
 				continue
 			}
 			if isUnknownLongFlag(tok) {

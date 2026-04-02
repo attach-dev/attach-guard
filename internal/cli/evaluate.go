@@ -88,7 +88,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 	var reasons []string
 	selectedVersions := make(map[string]string)
 	anyRewritten := false
-	unsupportedByCmd := make(map[int]int)
+	unsupportedByCmd := make(map[int]bool)
 
 	selector := versionselect.NewSelector(e.prov, e.engine, e.cfg)
 
@@ -124,7 +124,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 			if result.UnsupportedSource {
 				packages = append(packages, eval)
-				unsupportedByCmd[cmdIdx]++
+				unsupportedByCmd[cmdIdx] = true
 				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, result.Reason))
 				continue
 			}
@@ -178,7 +178,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 	anyUnsupportedSource := false
 	for cmdIdx, cmd := range enabledCmds {
-		if unsupportedByCmd[cmdIdx] > 0 {
+		if unsupportedByCmd[cmdIdx] {
 			anyUnsupportedSource = true
 			overallDecision = worseDecision(overallDecision, api.Ask)
 			reasons = append(reasons, fmt.Sprintf("%s: command contains package sources that could not be evaluated; manual review required", cmd.PackageManager))
