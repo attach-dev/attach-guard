@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/attach-dev/attach-guard/pkg/api"
@@ -44,9 +45,10 @@ func (p *Provider) Name() string {
 	return "socket"
 }
 
-// IsAvailable checks if the Socket API is reachable.
+// IsAvailable checks if the Socket API is reachable using the zero-cost quota endpoint.
 func (p *Provider) IsAvailable(ctx context.Context) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL, nil)
+	url := fmt.Sprintf("%s/quota", baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return false
 	}
@@ -62,10 +64,7 @@ func (p *Provider) IsAvailable(ctx context.Context) bool {
 // GetPackageScore fetches score data for a specific package version from Socket.
 func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem, name, version string) (*api.VersionInfo, error) {
 	eco := socketEcosystem(ecosystem)
-	url := fmt.Sprintf("%s/npm/%s/score?version=%s", baseURL, name, version)
-	if eco != "npm" {
-		url = fmt.Sprintf("%s/%s/%s/score?version=%s", baseURL, eco, name, version)
-	}
+	url := fmt.Sprintf("%s/%s/%s/%s/score", baseURL, eco, name, version)
 
 	body, err := p.doGet(ctx, url)
 	if err != nil {
@@ -81,7 +80,7 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 		Version: version,
 		Score: api.PackageScore{
 			SupplyChain: resp.SupplyChainRisk.Score * 100,
-			Overall:     resp.Overall.Score * 100,
+			Overall:     resp.DepScore * 100,
 		},
 	}
 
@@ -102,40 +101,90 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 	return info, nil
 }
 
-// ListVersions fetches available versions for a package from Socket.
+// maxCandidates is the number of recent versions to score via the Socket API.
+const maxCandidates = 10
+
+// ListVersions fetches available versions from the npm registry (newest first)
+// and scores the top candidates via the Socket score endpoint.
 func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]api.VersionInfo, error) {
-	eco := socketEcosystem(ecosystem)
-	url := fmt.Sprintf("%s/%s/%s/versions", baseURL, eco, name)
-
-	body, err := p.doGet(ctx, url)
+	// Fetch version list from the npm registry
+	registryURL := fmt.Sprintf("https://registry.npmjs.org/%s", name)
+	body, err := p.doGetPublic(ctx, registryURL)
 	if err != nil {
-		return nil, fmt.Errorf("fetching versions for %s: %w", name, err)
+		return nil, fmt.Errorf("fetching versions for %s from npm registry: %w", name, err)
 	}
 
-	var resp versionsResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parsing versions response for %s: %w", name, err)
+	var reg npmRegistryResponse
+	if err := json.Unmarshal(body, &reg); err != nil {
+		return nil, fmt.Errorf("parsing npm registry response for %s: %w", name, err)
 	}
 
+	// Build ordered version list from dist-tags.latest backwards through time
+	ordered := reg.orderedVersions()
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+
+	// Score the top N candidates via Socket
+	limit := maxCandidates
+	if len(ordered) < limit {
+		limit = len(ordered)
+	}
+
+	eco := socketEcosystem(ecosystem)
 	var versions []api.VersionInfo
-	for _, v := range resp.Versions {
+	for _, entry := range ordered[:limit] {
 		info := api.VersionInfo{
-			Version:    v.Version,
-			Deprecated: v.Deprecated,
-			Score: api.PackageScore{
-				SupplyChain: v.Score.SupplyChainRisk * 100,
-				Overall:     v.Score.Overall * 100,
-			},
+			Version:    entry.Version,
+			Deprecated: entry.Deprecated,
 		}
-		if v.PublishedAt != "" {
-			if t, err := time.Parse(time.RFC3339, v.PublishedAt); err == nil {
-				info.PublishedAt = t
+		if !entry.PublishedAt.IsZero() {
+			info.PublishedAt = entry.PublishedAt
+		}
+
+		// Fetch score from Socket — skip on error (version still included with zero scores)
+		scoreURL := fmt.Sprintf("%s/%s/%s/%s/score", baseURL, eco, name, entry.Version)
+		scoreBody, err := p.doGet(ctx, scoreURL)
+		if err == nil {
+			var sr scoreResponse
+			if json.Unmarshal(scoreBody, &sr) == nil {
+				info.Score = api.PackageScore{
+					SupplyChain: sr.SupplyChainRisk.Score * 100,
+					Overall:     sr.DepScore * 100,
+				}
 			}
 		}
+
 		versions = append(versions, info)
 	}
 
 	return versions, nil
+}
+
+// doGetPublic makes a GET request without auth (for public registries).
+func (p *Provider) doGetPublic(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("registry returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return body, nil
 }
 
 func (p *Provider) doGet(ctx context.Context, url string) ([]byte, error) {
@@ -178,9 +227,7 @@ type scoreResponse struct {
 	SupplyChainRisk struct {
 		Score float64 `json:"score"`
 	} `json:"supplyChainRisk"`
-	Overall struct {
-		Score float64 `json:"score"`
-	} `json:"overall"`
+	DepScore    float64       `json:"depscore"`
 	PublishedAt string        `json:"publishedAt"`
 	Issues      []issueEntry  `json:"issues"`
 }
@@ -191,16 +238,60 @@ type issueEntry struct {
 	Category string `json:"category"`
 }
 
-type versionsResponse struct {
-	Versions []versionEntry `json:"versions"`
+// npm registry response types
+type npmRegistryResponse struct {
+	DistTags map[string]string                `json:"dist-tags"`
+	Time     map[string]string                `json:"time"`
+	Versions map[string]npmRegistryVersionInfo `json:"versions"`
 }
 
-type versionEntry struct {
-	Version     string `json:"version"`
-	PublishedAt string `json:"publishedAt"`
-	Deprecated  bool   `json:"deprecated"`
-	Score       struct {
-		SupplyChainRisk float64 `json:"supplyChainRisk"`
-		Overall         float64 `json:"overall"`
-	} `json:"score"`
+type npmRegistryVersionInfo struct {
+	Version    string `json:"version"`
+	Deprecated any    `json:"deprecated"` // string or bool
+}
+
+type orderedVersion struct {
+	Version     string
+	PublishedAt time.Time
+	Deprecated  bool
+}
+
+// orderedVersions returns versions sorted newest-first using publish times.
+func (r *npmRegistryResponse) orderedVersions() []orderedVersion {
+	type entry struct {
+		version     string
+		publishedAt time.Time
+		deprecated  bool
+	}
+
+	var entries []entry
+	for ver, info := range r.Versions {
+		dep := false
+		if info.Deprecated != nil {
+			switch v := info.Deprecated.(type) {
+			case bool:
+				dep = v
+			case string:
+				dep = v != ""
+			}
+		}
+		var t time.Time
+		if ts, ok := r.Time[ver]; ok {
+			if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+				t = parsed
+			}
+		}
+		entries = append(entries, entry{version: ver, publishedAt: t, deprecated: dep})
+	}
+
+	// Sort newest first
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].publishedAt.After(entries[j].publishedAt)
+	})
+
+	result := make([]orderedVersion, len(entries))
+	for i, e := range entries {
+		result[i] = orderedVersion{Version: e.version, PublishedAt: e.publishedAt, Deprecated: e.deprecated}
+	}
+	return result
 }
