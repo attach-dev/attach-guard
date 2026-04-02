@@ -461,6 +461,7 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		"pip install requests --index-url=https://custom.pypi.org/simple",
 		"pip install requests --extra-index-url https://custom.pypi.org/simple",
 		"pip install --requirement=requirements.txt",
+		"PIP_INDEX_URL=file:///tmp/simple pip install requests",
 		"PIP_INDEX_URL=https://private.example/simple pip install requests",
 		"cargo add --git https://github.com/user/repo",
 		"cargo add serde --registry internal",
