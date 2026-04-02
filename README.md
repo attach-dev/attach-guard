@@ -58,15 +58,38 @@ A security guardrail must be a hook because enforcement requires interception at
 
 ## Installation
 
-### Prerequisites
+### Quick Start: Claude Code Plugin
+
+The fastest way to try attach-guard. Requires [Go 1.21+](https://go.dev/dl/) and a [Socket.dev](https://socket.dev) API token (free tier available).
+
+```bash
+git clone https://github.com/attach-dev/attach-guard.git
+cd attach-guard
+claude --plugin-dir ./plugin
+```
+
+Claude will prompt for your Socket API token on first use (stored securely in your system keychain). The binary auto-builds from source on the first `/explain` invocation. The hook, config, and skill are all registered automatically — no manual setup needed.
+
+Once running, the plugin provides:
+- **Automatic enforcement** — every `npm install` / `pnpm add` is intercepted and checked
+- **`/explain <package>`** — look up any package's risk score, alerts, and version history
+
+> **Note:** Remote `claude plugin install` is not yet supported because the plugin
+> does not ship prebuilt binaries. This is tracked in the [roadmap](docs/ROADMAP.md).
+
+### Manual Installation
+
+For use without the plugin system, or to install the binary globally.
+
+#### Prerequisites
 
 - [Go 1.21+](https://go.dev/dl/) (to build from source)
 - A [Socket.dev](https://socket.dev) API token (free tier available)
 
-### Step 1: Build and install the binary
+#### Step 1: Build and install the binary
 
 ```bash
-go build -o attach-guard ./cmd/attach-guard
+make build
 ```
 
 Move the binary somewhere on your PATH:
@@ -89,7 +112,7 @@ attach-guard version
 # attach-guard v0.1.0
 ```
 
-### Step 2: Set up your Socket API token
+#### Step 2: Set up your Socket API token
 
 ```bash
 export SOCKET_API_TOKEN="your-token-here"
@@ -97,7 +120,7 @@ export SOCKET_API_TOKEN="your-token-here"
 
 Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist across sessions.
 
-### Step 3: Initialize config
+#### Step 3: Initialize config
 
 ```bash
 attach-guard config init
@@ -106,7 +129,7 @@ attach-guard config init
 
 This creates `~/.attach-guard/config.yaml` with sensible defaults. See [Configuration](#configuration) below to customize policy thresholds.
 
-### Step 4: Add the Claude Code hook
+#### Step 4: Add the Claude Code hook
 
 Add the following to your project's `.claude/settings.json` (shared with team) or `.claude/settings.local.json` (personal, gitignored):
 
@@ -130,7 +153,7 @@ Add the following to your project's `.claude/settings.json` (shared with team) o
 
 For global protection across all projects, add it to `~/.claude/settings.json` instead.
 
-### Step 5: Verify
+#### Step 5: Verify
 
 Ask Claude Code to install a package. You should see attach-guard intercept the command:
 
@@ -290,24 +313,19 @@ make build
 ./attach-guard evaluate npm install lodash
 ```
 
-### Testing as a Claude Code plugin
+### Plugin development
 
-The plugin can be tested locally without a remote install. The bootstrap script
-will auto-build the binary from source on first run if Go is installed:
-
-```bash
-claude --plugin-dir ./plugin
-```
-
-To cross-compile binaries for all platforms explicitly:
+Cross-compile plugin binaries for all platforms:
 
 ```bash
 make plugin-build
 ```
 
-> **Note:** Remote `claude plugin install` is not yet supported because the plugin
-> does not ship prebuilt binaries. This is tracked in the roadmap (GitHub Actions
-> release workflow).
+Test the plugin locally:
+
+```bash
+claude --plugin-dir ./plugin
+```
 
 ## License
 
