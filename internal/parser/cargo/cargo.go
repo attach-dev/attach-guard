@@ -9,6 +9,7 @@ import (
 )
 
 var flagsWithValue = map[string]bool{
+	"-F":              true,
 	"--features":      true,
 	"--rename":        true,
 	"--manifest-path": true,

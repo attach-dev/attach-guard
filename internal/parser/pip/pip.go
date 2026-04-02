@@ -44,6 +44,15 @@ var unparsedValueFlags = map[string]bool{
 
 var rangeOperators = []string{">=", "~=", "!=", "<=", ">", "<"}
 
+var localArchiveSuffixes = []string{
+	".whl",
+	".zip",
+	".tar.gz",
+	".tgz",
+	".tar.bz2",
+	".tar.xz",
+}
+
 // Parse attempts to parse direct pip/pip3 install commands.
 // Unlike npm/pnpm parsing, recognized commands may return a ParsedCommand with
 // zero evaluable packages when all positional args were skipped as unsupported.
@@ -139,8 +148,17 @@ func shouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, st
 
 func shouldSkipArg(tok string) bool {
 	if strings.HasPrefix(tok, ".") || strings.HasPrefix(tok, "/") ||
-		strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") {
+		strings.HasPrefix(tok, "http://") || strings.HasPrefix(tok, "https://") ||
+		strings.HasPrefix(tok, "file://") {
 		return true
+	}
+	if strings.Contains(tok, "/") {
+		return true
+	}
+	for _, suffix := range localArchiveSuffixes {
+		if strings.HasSuffix(tok, suffix) {
+			return true
+		}
 	}
 	if strings.Contains(tok, "[") {
 		return true

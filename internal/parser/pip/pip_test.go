@@ -4,20 +4,22 @@ import "testing"
 
 func TestParse(t *testing.T) {
 	tests := []struct {
-		name        string
-		command     []string
-		wantNil     bool
-		wantPM      string
-		wantCount   int
-		wantName    string
-		wantVersion string
-		wantPinned  bool
+		name         string
+		command      []string
+		wantNil      bool
+		wantPM       string
+		wantCount    int
+		wantName     string
+		wantVersion  string
+		wantPinned   bool
 		wantUnparsed bool
 	}{
 		{"basic", []string{"pip", "install", "requests"}, false, "pip", 1, "requests", "", false, false},
 		{"pip3 pinned", []string{"pip3", "install", "requests==2.31.0"}, false, "pip3", 1, "requests", "2.31.0", true, false},
 		{"bare install", []string{"pip", "install"}, false, "pip", 0, "", "", false, false},
 		{"skip local path", []string{"pip", "install", "."}, false, "pip", 0, "", "", false, true},
+		{"skip relative wheel path", []string{"pip", "install", "dist/pkg.whl"}, false, "pip", 0, "", "", false, true},
+		{"skip file url", []string{"pip", "install", "file:///tmp/pkg.whl"}, false, "pip", 0, "", "", false, true},
 		{"skip requirement file", []string{"pip", "install", "-r", "requirements.txt"}, false, "pip", 0, "", "", false, true},
 		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true},
 		{"range deferred", []string{"pip", "install", "requests>=2.0"}, false, "pip", 0, "", "", false, true},

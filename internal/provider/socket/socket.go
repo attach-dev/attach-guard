@@ -8,7 +8,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -106,8 +108,9 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 // maxCandidates is the number of recent versions to score via the Socket API.
 const maxCandidates = 10
 
-// ListVersions fetches available versions from the ecosystem registry (newest
-// first) and scores the top candidates via the Socket score endpoint.
+// ListVersions fetches available versions from the ecosystem registry in the
+// same precedence order the package manager would consider for an unpinned
+// install, then scores the top candidates via the Socket score endpoint.
 func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, name string) ([]api.VersionInfo, error) {
 	ordered, err := p.listOrderedVersions(ctx, ecosystem, name)
 	if err != nil {
@@ -212,10 +215,7 @@ func (p *Provider) listOrderedVersionsPyPI(ctx context.Context, name string) ([]
 		})
 	}
 
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
-	})
-	return ordered, nil
+	return orderPyPIVersions(ordered), nil
 }
 
 func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]orderedVersion, error) {
@@ -243,10 +243,7 @@ func (p *Provider) listOrderedVersionsGo(ctx context.Context, name string) ([]or
 		})
 	}
 
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
-	})
-	return ordered, nil
+	return orderGoVersions(ordered), nil
 }
 
 func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([]orderedVersion, error) {
@@ -272,10 +269,7 @@ func (p *Provider) listOrderedVersionsCargo(ctx context.Context, name string) ([
 		})
 	}
 
-	sort.Slice(ordered, func(i, j int) bool {
-		return ordered[i].PublishedAt.After(ordered[j].PublishedAt)
-	})
-	return ordered, nil
+	return orderCargoVersions(ordered), nil
 }
 
 // doGetPublic makes a GET request without auth (for public registries).
@@ -370,9 +364,9 @@ type scoreResponse struct {
 	SupplyChainRisk struct {
 		Score float64 `json:"score"`
 	} `json:"supplyChainRisk"`
-	DepScore    float64       `json:"depscore"`
-	PublishedAt string        `json:"publishedAt"`
-	Issues      []issueEntry  `json:"issues"`
+	DepScore    float64      `json:"depscore"`
+	PublishedAt string       `json:"publishedAt"`
+	Issues      []issueEntry `json:"issues"`
 }
 
 type issueEntry struct {
@@ -407,8 +401,8 @@ type cargoVersionInfo struct {
 
 // npm registry response types
 type npmRegistryResponse struct {
-	DistTags map[string]string                `json:"dist-tags"`
-	Time     map[string]string                `json:"time"`
+	DistTags map[string]string                 `json:"dist-tags"`
+	Time     map[string]string                 `json:"time"`
 	Versions map[string]npmRegistryVersionInfo `json:"versions"`
 }
 
@@ -422,6 +416,38 @@ type orderedVersion struct {
 	PublishedAt time.Time
 	Deprecated  bool
 }
+
+type semverVersion struct {
+	major      int
+	minor      int
+	patch      int
+	prerelease []semverIdentifier
+}
+
+type semverIdentifier struct {
+	numeric bool
+	number  int
+	text    string
+}
+
+type pep440Version struct {
+	epoch    int
+	release  []int
+	prePhase int
+	preNum   int
+	hasPre   bool
+	postNum  int
+	hasPost  bool
+	devNum   int
+	hasDev   bool
+}
+
+var (
+	pep440ReleasePattern = regexp.MustCompile(`^(\d+(?:\.\d+)*)`)
+	pep440PrePattern     = regexp.MustCompile(`^(?:[._-]?)(a|b|rc|c|alpha|beta|pre|preview)(\d*)`)
+	pep440PostPattern    = regexp.MustCompile(`^(?:[._-]?)(post|rev|r)(\d*)|^-(\d+)`)
+	pep440DevPattern     = regexp.MustCompile(`^(?:[._-]?dev)(\d*)`)
+)
 
 // orderedVersions returns versions sorted newest-first using publish times.
 func (r *npmRegistryResponse) orderedVersions() []orderedVersion {
@@ -461,4 +487,508 @@ func (r *npmRegistryResponse) orderedVersions() []orderedVersion {
 		result[i] = orderedVersion{Version: e.version, PublishedAt: e.publishedAt, Deprecated: e.deprecated}
 	}
 	return result
+}
+
+func orderPyPIVersions(versions []orderedVersion) []orderedVersion {
+	stable := make([]orderedVersion, 0, len(versions))
+	prerelease := make([]orderedVersion, 0, len(versions))
+	fallback := make([]orderedVersion, 0, len(versions))
+
+	for _, version := range versions {
+		parsed, ok := parsePEP440Version(version.Version)
+		if !ok {
+			fallback = append(fallback, version)
+			continue
+		}
+		if isPEP440Prerelease(parsed) {
+			prerelease = append(prerelease, version)
+			continue
+		}
+		stable = append(stable, version)
+	}
+
+	switch {
+	case len(stable) > 0:
+		sort.Slice(stable, func(i, j int) bool {
+			left, _ := parsePEP440Version(stable[i].Version)
+			right, _ := parsePEP440Version(stable[j].Version)
+			return comparePEP440Versions(left, right) > 0
+		})
+		return stable
+	case len(prerelease) > 0:
+		sort.Slice(prerelease, func(i, j int) bool {
+			left, _ := parsePEP440Version(prerelease[i].Version)
+			right, _ := parsePEP440Version(prerelease[j].Version)
+			return comparePEP440Versions(left, right) > 0
+		})
+		return prerelease
+	default:
+		sortByPublishedAt(fallback)
+		return fallback
+	}
+}
+
+func orderGoVersions(versions []orderedVersion) []orderedVersion {
+	releases := make([]orderedVersion, 0, len(versions))
+	prereleases := make([]orderedVersion, 0, len(versions))
+	pseudos := make([]orderedVersion, 0, len(versions))
+	fallback := make([]orderedVersion, 0, len(versions))
+
+	for _, version := range versions {
+		parsed, ok := parseSemverVersion(version.Version, true)
+		if !ok {
+			fallback = append(fallback, version)
+			continue
+		}
+		if isGoPseudoVersion(version.Version) {
+			pseudos = append(pseudos, version)
+			continue
+		}
+		if len(parsed.prerelease) > 0 {
+			prereleases = append(prereleases, version)
+			continue
+		}
+		releases = append(releases, version)
+	}
+
+	switch {
+	case len(releases) > 0:
+		sort.Slice(releases, func(i, j int) bool {
+			left, _ := parseSemverVersion(releases[i].Version, true)
+			right, _ := parseSemverVersion(releases[j].Version, true)
+			return compareSemverVersions(left, right) > 0
+		})
+		return releases
+	case len(prereleases) > 0:
+		sort.Slice(prereleases, func(i, j int) bool {
+			left, _ := parseSemverVersion(prereleases[i].Version, true)
+			right, _ := parseSemverVersion(prereleases[j].Version, true)
+			return compareSemverVersions(left, right) > 0
+		})
+		return prereleases
+	case len(pseudos) > 0:
+		sortByPublishedAt(pseudos)
+		return pseudos
+	default:
+		sortByPublishedAt(fallback)
+		return fallback
+	}
+}
+
+func orderCargoVersions(versions []orderedVersion) []orderedVersion {
+	stable := make([]orderedVersion, 0, len(versions))
+	prerelease := make([]orderedVersion, 0, len(versions))
+	fallback := make([]orderedVersion, 0, len(versions))
+
+	for _, version := range versions {
+		parsed, ok := parseSemverVersion(version.Version, false)
+		if !ok {
+			fallback = append(fallback, version)
+			continue
+		}
+		if len(parsed.prerelease) > 0 {
+			prerelease = append(prerelease, version)
+			continue
+		}
+		stable = append(stable, version)
+	}
+
+	switch {
+	case len(stable) > 0:
+		sort.Slice(stable, func(i, j int) bool {
+			left, _ := parseSemverVersion(stable[i].Version, false)
+			right, _ := parseSemverVersion(stable[j].Version, false)
+			return compareSemverVersions(left, right) > 0
+		})
+		return stable
+	case len(prerelease) > 0:
+		sort.Slice(prerelease, func(i, j int) bool {
+			left, _ := parseSemverVersion(prerelease[i].Version, false)
+			right, _ := parseSemverVersion(prerelease[j].Version, false)
+			return compareSemverVersions(left, right) > 0
+		})
+		return prerelease
+	default:
+		sortByPublishedAt(fallback)
+		return fallback
+	}
+}
+
+func sortByPublishedAt(versions []orderedVersion) {
+	sort.Slice(versions, func(i, j int) bool {
+		if !versions[i].PublishedAt.Equal(versions[j].PublishedAt) {
+			return versions[i].PublishedAt.After(versions[j].PublishedAt)
+		}
+		return versions[i].Version > versions[j].Version
+	})
+}
+
+func parseSemverVersion(version string, requireV bool) (semverVersion, bool) {
+	trimmed := version
+	if requireV {
+		if !strings.HasPrefix(trimmed, "v") {
+			return semverVersion{}, false
+		}
+		trimmed = trimmed[1:]
+	} else if strings.HasPrefix(trimmed, "v") {
+		return semverVersion{}, false
+	}
+
+	if buildIdx := strings.IndexByte(trimmed, '+'); buildIdx >= 0 {
+		trimmed = trimmed[:buildIdx]
+	}
+
+	core := trimmed
+	pre := ""
+	if dashIdx := strings.IndexByte(trimmed, '-'); dashIdx >= 0 {
+		core = trimmed[:dashIdx]
+		pre = trimmed[dashIdx+1:]
+	}
+
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return semverVersion{}, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return semverVersion{}, false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return semverVersion{}, false
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return semverVersion{}, false
+	}
+
+	parsed := semverVersion{major: major, minor: minor, patch: patch}
+	if pre == "" {
+		return parsed, true
+	}
+
+	idents := strings.Split(pre, ".")
+	parsed.prerelease = make([]semverIdentifier, 0, len(idents))
+	for _, ident := range idents {
+		if ident == "" {
+			return semverVersion{}, false
+		}
+		if allDigits(ident) {
+			number, err := strconv.Atoi(ident)
+			if err != nil {
+				return semverVersion{}, false
+			}
+			parsed.prerelease = append(parsed.prerelease, semverIdentifier{
+				numeric: true,
+				number:  number,
+				text:    ident,
+			})
+			continue
+		}
+		parsed.prerelease = append(parsed.prerelease, semverIdentifier{text: ident})
+	}
+
+	return parsed, true
+}
+
+func compareSemverVersions(left, right semverVersion) int {
+	if left.major != right.major {
+		return compareInts(left.major, right.major)
+	}
+	if left.minor != right.minor {
+		return compareInts(left.minor, right.minor)
+	}
+	if left.patch != right.patch {
+		return compareInts(left.patch, right.patch)
+	}
+	if len(left.prerelease) == 0 && len(right.prerelease) == 0 {
+		return 0
+	}
+	if len(left.prerelease) == 0 {
+		return 1
+	}
+	if len(right.prerelease) == 0 {
+		return -1
+	}
+
+	limit := len(left.prerelease)
+	if len(right.prerelease) < limit {
+		limit = len(right.prerelease)
+	}
+	for i := 0; i < limit; i++ {
+		if cmp := compareSemverIdentifier(left.prerelease[i], right.prerelease[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return compareInts(len(left.prerelease), len(right.prerelease))
+}
+
+func compareSemverIdentifier(left, right semverIdentifier) int {
+	switch {
+	case left.numeric && right.numeric:
+		return compareInts(left.number, right.number)
+	case left.numeric:
+		return -1
+	case right.numeric:
+		return 1
+	default:
+		return strings.Compare(left.text, right.text)
+	}
+}
+
+func isGoPseudoVersion(version string) bool {
+	trimmed := strings.TrimPrefix(version, "v")
+	if buildIdx := strings.IndexByte(trimmed, '+'); buildIdx >= 0 {
+		trimmed = trimmed[:buildIdx]
+	}
+	parts := strings.Split(trimmed, "-")
+	if len(parts) < 3 {
+		return false
+	}
+
+	timestampPart := parts[len(parts)-2]
+	if dot := strings.LastIndexByte(timestampPart, '.'); dot >= 0 {
+		timestampPart = timestampPart[dot+1:]
+	}
+	hashPart := parts[len(parts)-1]
+	return len(timestampPart) == 14 && allDigits(timestampPart) && isLowerHex(hashPart)
+}
+
+func parsePEP440Version(version string) (pep440Version, bool) {
+	trimmed := strings.ToLower(strings.TrimSpace(version))
+	if localIdx := strings.IndexByte(trimmed, '+'); localIdx >= 0 {
+		trimmed = trimmed[:localIdx]
+	}
+	trimmed = strings.TrimPrefix(trimmed, "v")
+
+	parsed := pep440Version{}
+	if bangIdx := strings.IndexByte(trimmed, '!'); bangIdx >= 0 {
+		epoch, err := strconv.Atoi(trimmed[:bangIdx])
+		if err != nil {
+			return pep440Version{}, false
+		}
+		parsed.epoch = epoch
+		trimmed = trimmed[bangIdx+1:]
+	}
+
+	releaseMatch := pep440ReleasePattern.FindStringSubmatch(trimmed)
+	if releaseMatch == nil {
+		return pep440Version{}, false
+	}
+	for _, part := range strings.Split(releaseMatch[1], ".") {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return pep440Version{}, false
+		}
+		parsed.release = append(parsed.release, value)
+	}
+	trimmed = trimmed[len(releaseMatch[0]):]
+
+	if preMatch := pep440PrePattern.FindStringSubmatch(trimmed); preMatch != nil {
+		parsed.hasPre = true
+		parsed.prePhase = pep440PrePhase(preMatch[1])
+		parsed.preNum = parseOptionalInt(preMatch[2])
+		trimmed = trimmed[len(preMatch[0]):]
+	}
+
+	if postMatch := pep440PostPattern.FindStringSubmatch(trimmed); postMatch != nil {
+		parsed.hasPost = true
+		if postMatch[3] != "" {
+			parsed.postNum = parseOptionalInt(postMatch[3])
+		} else {
+			parsed.postNum = parseOptionalInt(postMatch[2])
+		}
+		trimmed = trimmed[len(postMatch[0]):]
+	}
+
+	if devMatch := pep440DevPattern.FindStringSubmatch(trimmed); devMatch != nil {
+		parsed.hasDev = true
+		parsed.devNum = parseOptionalInt(devMatch[1])
+		trimmed = trimmed[len(devMatch[0]):]
+	}
+
+	return parsed, trimmed == ""
+}
+
+func comparePEP440Versions(left, right pep440Version) int {
+	if left.epoch != right.epoch {
+		return compareInts(left.epoch, right.epoch)
+	}
+	if cmp := compareIntSlices(left.release, right.release); cmp != 0 {
+		return cmp
+	}
+
+	leftRank := pep440Rank(left)
+	rightRank := pep440Rank(right)
+	if leftRank != rightRank {
+		return compareInts(leftRank, rightRank)
+	}
+
+	switch leftRank {
+	case 0:
+		return compareInts(left.devNum, right.devNum)
+	case 1, 2, 3:
+		if left.preNum != right.preNum {
+			return compareInts(left.preNum, right.preNum)
+		}
+		return comparePEP440PreSuffix(left, right)
+	case 5:
+		if left.postNum != right.postNum {
+			return compareInts(left.postNum, right.postNum)
+		}
+		return comparePEP440PostSuffix(left, right)
+	default:
+		return 0
+	}
+}
+
+func comparePEP440PreSuffix(left, right pep440Version) int {
+	leftRank := pep440PreSuffixRank(left)
+	rightRank := pep440PreSuffixRank(right)
+	if leftRank != rightRank {
+		return compareInts(leftRank, rightRank)
+	}
+	switch leftRank {
+	case 0:
+		return compareInts(left.devNum, right.devNum)
+	case 2:
+		if left.postNum != right.postNum {
+			return compareInts(left.postNum, right.postNum)
+		}
+		return compareInts(left.devNum, right.devNum)
+	case 3:
+		return compareInts(left.postNum, right.postNum)
+	default:
+		return 0
+	}
+}
+
+func comparePEP440PostSuffix(left, right pep440Version) int {
+	leftRank := pep440PostSuffixRank(left)
+	rightRank := pep440PostSuffixRank(right)
+	if leftRank != rightRank {
+		return compareInts(leftRank, rightRank)
+	}
+	if leftRank == 0 {
+		return compareInts(left.devNum, right.devNum)
+	}
+	return 0
+}
+
+func pep440Rank(version pep440Version) int {
+	switch {
+	case !version.hasPre && !version.hasPost && version.hasDev:
+		return 0
+	case version.hasPre:
+		return version.prePhase
+	case version.hasPost:
+		return 5
+	default:
+		return 4
+	}
+}
+
+func pep440PrePhase(raw string) int {
+	switch raw {
+	case "a", "alpha":
+		return 1
+	case "b", "beta":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func pep440PreSuffixRank(version pep440Version) int {
+	switch {
+	case !version.hasPost && version.hasDev:
+		return 0
+	case !version.hasPost:
+		return 1
+	case version.hasDev:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func pep440PostSuffixRank(version pep440Version) int {
+	if version.hasDev {
+		return 0
+	}
+	return 1
+}
+
+func isPEP440Prerelease(version pep440Version) bool {
+	return version.hasPre || version.hasDev
+}
+
+func compareIntSlices(left, right []int) int {
+	limit := len(left)
+	if len(right) > limit {
+		limit = len(right)
+	}
+	for i := 0; i < limit; i++ {
+		leftValue := 0
+		if i < len(left) {
+			leftValue = left[i]
+		}
+		rightValue := 0
+		if i < len(right) {
+			rightValue = right[i]
+		}
+		if leftValue != rightValue {
+			return compareInts(leftValue, rightValue)
+		}
+	}
+	return 0
+}
+
+func compareInts(left, right int) int {
+	switch {
+	case left > right:
+		return 1
+	case left < right:
+		return -1
+	default:
+		return 0
+	}
+}
+
+func parseOptionalInt(raw string) int {
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return value
+}
+
+func allDigits(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	for _, r := range raw {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isLowerHex(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	for _, r := range raw {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
