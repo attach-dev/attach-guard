@@ -304,6 +304,9 @@ func TestGetScoreByPurl_ParsesNDJSON(t *testing.T) {
 	if len(info.Alerts) != 1 || info.Alerts[0].Title != "malware" {
 		t.Fatalf("alerts = %#v, want single malware alert", info.Alerts)
 	}
+	if info.Alerts[0].Category != "malware" {
+		t.Fatalf("alert category = %q, want malware", info.Alerts[0].Category)
+	}
 }
 
 func TestGetScoreByPurl_AggregatesWorstCaseAcrossArtifacts(t *testing.T) {
@@ -459,11 +462,14 @@ func TestListVersionsPyPI_SkipsMissingBatchResultAndContinues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListVersions() error = %v", err)
 	}
-	if len(versions) != 2 {
-		t.Fatalf("len(versions) = %d, want 2 scored fallback versions", len(versions))
+	if len(versions) != 3 {
+		t.Fatalf("len(versions) = %d, want 3 versions with missing head preserved", len(versions))
 	}
-	if versions[0].Version != "1.0.1" || versions[1].Version != "1.0.0" {
-		t.Fatalf("versions = %#v, want [1.0.1 1.0.0]", versions)
+	if versions[0].Version != "1.0.2" || versions[1].Version != "1.0.1" || versions[2].Version != "1.0.0" {
+		t.Fatalf("versions = %#v, want [1.0.2 1.0.1 1.0.0]", versions)
+	}
+	if versions[0].Score.SupplyChain != 0 || versions[0].Score.Overall != 0 {
+		t.Fatalf("head version score = %+v, want zero placeholder score", versions[0].Score)
 	}
 }
 

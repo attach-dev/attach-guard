@@ -206,21 +206,21 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 		if err != nil {
 			return nil, err
 		}
+		if len(scored) == 0 {
+			return nil, provider.ErrUnsupportedSource
+		}
 
 		versions := make([]api.VersionInfo, 0, limit)
 		for _, entry := range ordered[:limit] {
 			info, ok := scored[entry.Version]
 			if !ok {
-				continue
+				info = &api.VersionInfo{Version: entry.Version}
 			}
 			if info.PublishedAt.IsZero() && !entry.PublishedAt.IsZero() {
 				info.PublishedAt = entry.PublishedAt
 			}
 			info.Deprecated = entry.Deprecated
 			versions = append(versions, *info)
-		}
-		if len(versions) == 0 {
-			return nil, provider.ErrUnsupportedSource
 		}
 		return versions, nil
 	}
@@ -859,10 +859,13 @@ func orderedPyPIReleases(releases map[string][]pypiFileInfo) []orderedVersion {
 }
 
 func buildPurl(ecosystem api.Ecosystem, name, version string) (string, error) {
-	eco := purlEcosystem(ecosystem)
-	if eco == string(ecosystem) && ecosystem != api.EcosystemPyPI && ecosystem != api.EcosystemGo && ecosystem != api.EcosystemCargo {
+	switch ecosystem {
+	case api.EcosystemPyPI, api.EcosystemGo, api.EcosystemCargo:
+	default:
 		return "", fmt.Errorf("unsupported purl ecosystem %q", ecosystem)
 	}
+
+	eco := purlEcosystem(ecosystem)
 	return fmt.Sprintf("pkg:%s/%s@%s", eco, name, version), nil
 }
 
@@ -921,16 +924,13 @@ func parsePurlResponse(body []byte, requestedByPurl map[string]string) (map[stri
 		}
 
 		for _, alert := range artifact.Alerts {
-			key := strings.Join([]string{alert.Type, alert.Severity, alert.Category}, "|")
+			mapped := mapPurlAlert(alert)
+			key := strings.Join([]string{mapped.Title, mapped.Severity, mapped.Category}, "|")
 			if _, ok := seenAlerts[version][key]; ok {
 				continue
 			}
 			seenAlerts[version][key] = struct{}{}
-			info.Alerts = append(info.Alerts, api.PackageAlert{
-				Severity: alert.Severity,
-				Title:    alert.Type,
-				Category: alert.Category,
-			})
+			info.Alerts = append(info.Alerts, mapped)
 		}
 	}
 
@@ -962,6 +962,19 @@ func minFloat(left, right float64) float64 {
 		return right
 	}
 	return left
+}
+
+func mapPurlAlert(alert purlAlert) api.PackageAlert {
+	category := alert.Category
+	if strings.EqualFold(alert.Type, "malware") || strings.EqualFold(alert.Category, "malware") {
+		category = "malware"
+	}
+
+	return api.PackageAlert{
+		Severity: alert.Severity,
+		Title:    alert.Type,
+		Category: category,
+	}
 }
 
 func goModuleUsesPublicSources(module string) bool {

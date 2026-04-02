@@ -105,6 +105,39 @@ func TestSelect_UnpinnedFallsBackToOlder(t *testing.T) {
 	}
 }
 
+func TestSelect_UnpinnedZeroScoreHeadStillCountsAsRewrite(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	engine := policy.NewEngine(cfg)
+
+	mock.AddVersion("demo", api.VersionInfo{
+		Version:     "2.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 0, Overall: 0},
+	})
+	mock.AddVersion("demo", api.VersionInfo{
+		Version:     "1.9.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 88},
+	})
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemPyPI,
+		Name:      "demo",
+		Pinned:    false,
+	}, api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected.Version != "1.9.0" {
+		t.Fatalf("expected 1.9.0, got %s", result.Selected.Version)
+	}
+	if !result.WasRewritten {
+		t.Fatal("expected WasRewritten=true when skipped head version remains in candidate order")
+	}
+}
+
 func TestSelect_AllAskDoesNotFail(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
