@@ -88,7 +88,42 @@ if [[ ! -x "$BINARY" ]]; then
       fatal_error "failed to build from source. Run 'make plugin-build' to fix."
     fi
   else
-    fatal_error "binary not found and Go source not available. Install from source or wait for a release with prebuilt binaries."
+    # No Go source available — attempt to download a prebuilt binary
+    PLUGIN_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "${PLUGIN_ROOT}/.claude-plugin/plugin.json" | head -1)"
+    if [[ -z "$PLUGIN_VERSION" ]]; then
+      fatal_error "binary not found and could not read version from plugin.json."
+    fi
+
+    DOWNLOAD_URL="https://github.com/attach-dev/attach-guard/releases/download/v${PLUGIN_VERSION}/attach-guard-${OS}-${ARCH}"
+    CHECKSUMS_URL="https://github.com/attach-dev/attach-guard/releases/download/v${PLUGIN_VERSION}/checksums.txt"
+
+    echo "attach-guard: binary not found, downloading v${PLUGIN_VERSION} for ${OS}/${ARCH}..." >&2
+    mkdir -p "${PLUGIN_ROOT}/hooks/bin"
+
+    CURL_ERR="$(mktemp)"
+    if curl -fSL --connect-timeout 5 --max-time 30 -o "$BINARY" "$DOWNLOAD_URL" 2>"$CURL_ERR"; then
+      # Verify checksum — refuse to run unverified binaries
+      CHECKSUMS_FILE="$(mktemp)"
+      if curl -fSL --connect-timeout 5 --max-time 10 -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL" 2>/dev/null; then
+        EXPECTED="$(grep "attach-guard-${OS}-${ARCH}" "$CHECKSUMS_FILE" | awk '{print $1}')"
+        ACTUAL="$(shasum -a 256 "$BINARY" | awk '{print $1}')"
+        rm -f "$CHECKSUMS_FILE"
+        if [[ -n "$EXPECTED" && "$EXPECTED" != "$ACTUAL" ]]; then
+          rm -f "$BINARY"
+          fatal_error "checksum mismatch for downloaded binary (expected ${EXPECTED}, got ${ACTUAL}). Aborting."
+        fi
+      else
+        rm -f "$CHECKSUMS_FILE" "$BINARY"
+        fatal_error "could not download checksums — refusing to run unverified binary."
+      fi
+      rm -f "$CURL_ERR"
+      chmod +x "$BINARY"
+      echo "attach-guard: downloaded $BINARY" >&2
+    else
+      echo "attach-guard: curl error: $(cat "$CURL_ERR")" >&2
+      rm -f "$BINARY" "$CURL_ERR"
+      fatal_error "binary not found and download failed. Install Go and build from source, or check https://github.com/attach-dev/attach-guard/releases for available binaries."
+    fi
   fi
 fi
 
