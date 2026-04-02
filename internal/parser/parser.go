@@ -362,6 +362,14 @@ func looksLikeInstallTokens(tokens []string) bool {
 			return false
 		}
 
+		// attach-guard itself: the binary name includes platform suffixes
+		// (e.g. attach-guard-darwin-amd64), so use a prefix check. When
+		// the evaluate subcommand is invoked with "npm install foo" as
+		// arguments, those tokens are data, not a real install command.
+		if strings.HasPrefix(base, "attach-guard") {
+			return false
+		}
+
 		// Unknown binary (strace, nohup, etc.) — treat as potential wrapper, skip
 		i++
 		// Skip its flags

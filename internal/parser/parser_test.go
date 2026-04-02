@@ -385,6 +385,10 @@ func TestLooksLikeInstall(t *testing.T) {
 		"node -e 'npm install'",
 		"bash -c 'echo hello' npm install axios",
 		"sh -c 'ls' npm install lodash",
+		// attach-guard's own evaluate command should not trigger
+		"attach-guard evaluate npm install axios",
+		"/path/to/attach-guard-darwin-amd64 evaluate npm install axios",
+		`"/Users/me/.claude/plugins/attach-dev/plugin/hooks/bin/attach-guard-darwin-arm64" evaluate npm install axios`,
 	}
 	for _, cmd := range safe {
 		if LooksLikeInstall(cmd) {
