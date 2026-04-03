@@ -365,10 +365,37 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 }
 ```
 
+## API Quota
+
+attach-guard uses the [Socket.dev API](https://socket.dev) for package risk scoring. The free tier provides **500 quota units per hour**.
+
+| Ecosystem | Endpoint | Cost per call |
+|---|---|---|
+| npm / pnpm | `GET /v0/npm/{name}/{version}/score` | 10 units |
+| PyPI, Go, Cargo | `POST /v0/purl` (batch) | 100 units |
+
+**What this means in practice:**
+- npm packages: ~50 individual version scores per hour
+- PyPI/Go/Cargo packages: ~5 batch scoring calls per hour (each batch scores up to 10 versions)
+- Pinned installs (e.g. `pip install litellm==1.82.8`) use one call to score a single version
+- Unpinned installs (e.g. `pip install litellm`) use one batch call to score up to 10 candidate versions
+
+**When quota is exhausted**, scoring calls fail and attach-guard falls back to zero scores. This means:
+- Pinned installs are **denied** (score 0 < threshold 50) — safe, fails closed
+- Unpinned installs show "no acceptable version found" instead of offering a safe alternative — the version rewrite feature requires real scores to identify which version passes policy
+
+To check your remaining quota:
+```bash
+curl -s -H "Authorization: Bearer $SOCKET_API_TOKEN" "https://api.socket.dev/v0/quota"
+```
+
+Quota resets hourly. For higher limits, see [Socket.dev pricing](https://socket.dev/pricing).
+
 ## Current Limitations
 
 - Direct `pip` / `pip3`, `go get`, and `cargo add` are supported, but wrapper forms such as `python -m pip`, `uv pip`, `go install`, and `cargo install` are not yet guarded
 - pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
+- PyPI, Go, and Cargo scoring uses Socket's `POST /v0/purl` endpoint which has higher quota cost (100 units) compared to npm (10 units)
 - No transitive dependency analysis
 - No lockfile graph support
 - Single provider at a time
