@@ -1,29 +1,31 @@
 # attach-guard
 
-Hard-enforcement dependency install guard for AI coding agents and developers.
+Supply chain security plugin for Claude Code. Blocks compromised packages before they're installed.
+
+https://github.com/user-attachments/assets/26f7cd85-c482-48fe-842a-ec389e5fd21d
 
 ## The Problem
 
-AI coding agents and developers install packages before anyone reviews them. Existing tools scan after the fact or rely on advisory prompts. There is no open-source, local-first guardrail that sits directly in front of package install commands and blocks risky packages before they execute.
+Claude Code installs packages on your behalf — often without you reviewing each one. Existing security tools scan after the fact or rely on advisory prompts that Claude can skip. There is no open-source guardrail that sits directly in front of package install commands and blocks risky packages before they execute.
 
 ## What attach-guard Does
 
-attach-guard intercepts package installation commands and evaluates them against policy **before execution**. It is not an advisory scanner. It is a hard enforcement boundary.
+attach-guard is a Claude Code plugin that intercepts package installation commands and evaluates them against policy **before execution**. It is not an advisory scanner. It is a hard enforcement boundary.
 
-- Intercepts direct `npm install`, `npm i`, `pnpm add`, `pip install`, `pip3 install`, `go get`, and `cargo add` commands
-- Checks package scores, age, and alerts via a pluggable risk provider
-- Denies known malware and low-score packages
+- Installs as a Claude Code plugin — no manual hook configuration needed
+- Intercepts `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands via PreToolUse hooks
+- Checks package scores, age, and alerts via Socket.dev
+- Denies known malware and low-score packages automatically
 - Asks for confirmation on gray-band packages
 - Rewrites unpinned installs to safe pinned versions when possible
-- Works inside Claude Code (via PreToolUse hooks)
-- Fails closed in CI when the provider is unavailable
+- Fails closed when the provider is unavailable
 - Logs every decision to a local JSONL audit trail
 
 ## Smart Version Replacement: Block Without Breaking Flow
 
 Most security tools just say "no." attach-guard says "no, but here's a safe alternative."
 
-When a risky version is blocked, attach-guard doesn't stop the developer — it finds the newest version that passes policy and offers it as a replacement:
+When a risky version is blocked, attach-guard finds the newest version that passes policy and offers it as a replacement. Claude sees the safe alternative and can proceed immediately — your flow doesn't stop, it gets redirected to a safe path.
 
 **npm** — axios v1.14.1 and v0.30.4 were [compromised versions](https://socket.dev/blog/axios-npm-account-compromise) published via a hijacked maintainer account:
 
@@ -53,8 +55,6 @@ Result: ASK + rewritten command
 
 These are real examples — attach-guard blocks compromised versions automatically based on their supply chain scores.
 
-In Claude Code, this means Claude sees the safe alternative and can proceed immediately. The developer flow doesn't stop — it gets redirected to a safe path.
-
 | Scenario | Example | Decision | What happens |
 |---|---|---|---|
 | Package is safe | `npm install axios@1.14.0` | **Allow** | Install proceeds normally |
@@ -75,13 +75,13 @@ Your flow only fully stops when there is genuinely no safe version to offer.
 
 ## Why a Hook, Not a Skill or MCP
 
-attach-guard is a Claude Code **hook**, not a skill or MCP server. The distinction matters:
+attach-guard uses Claude Code **hooks** — not skills or MCP servers. The distinction matters:
 
 - **Hooks** run automatically on every matching tool call. They enforce rules deterministically — Claude cannot skip or override them.
 - **Skills** are instructions Claude follows when invoked. They guide behavior but cannot block actions.
 - **MCP servers** provide advisory context. They inform but do not enforce.
 
-A security guardrail must be a hook because enforcement requires interception at the tool-call boundary, before execution.
+Security enforcement requires interception at the tool-call boundary, before execution. Hooks are the only Claude Code extension point that guarantees this.
 
 ## Installation
 
@@ -227,7 +227,7 @@ Claude: I'll install axios.
 
 ## How It Works
 
-When Claude calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
+When Claude Code calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
 
 1. Claude Code fires the PreToolUse hook before execution
 2. The hook pipes the tool input JSON to `attach-guard hook` via stdin
