@@ -2,9 +2,7 @@
 
 Supply chain security plugin for Claude Code. Blocks compromised packages before they're installed.
 
-<a href="https://github.com/user-attachments/assets/6bd04205-c0c5-4265-87ec-27772f45e747">
-  <img src="assets/demo-poster.png" alt="attach-guard demo" width="100%">
-</a>
+<video src="https://github.com/user-attachments/assets/6bd04205-c0c5-4265-87ec-27772f45e747" width="100%" autoplay loop muted playsinline></video>
 
 ## The Problem
 
