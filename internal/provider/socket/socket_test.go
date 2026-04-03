@@ -409,6 +409,28 @@ func TestGetScoreByPurl_MissingArtifactReturnsUnsupportedSource(t *testing.T) {
 	}
 }
 
+func TestBuildPurlPyPI_NormalizesPackageName(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "PyYAML", version: "6.0.2", want: "pkg:pypi/pyyaml@6.0.2"},
+		{name: "zope.interface", version: "7.2", want: "pkg:pypi/zope-interface@7.2"},
+		{name: "python_dateutil", version: "2.9.0.post0", want: "pkg:pypi/python-dateutil@2.9.0.post0"},
+	}
+
+	for _, tt := range tests {
+		got, err := buildPurl(api.EcosystemPyPI, tt.name, tt.version)
+		if err != nil {
+			t.Fatalf("buildPurl(%q) error = %v", tt.name, err)
+		}
+		if got != tt.want {
+			t.Fatalf("buildPurl(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
 func TestGetPackageScorePyPI_UsesPurl(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
 		switch {
@@ -528,6 +550,42 @@ func TestListVersionsPyPI_SkipsMissingBatchResultAndContinues(t *testing.T) {
 	}
 	if versions[0].Score.SupplyChain != 0 || versions[0].Score.Overall != 0 {
 		t.Fatalf("head version score = %+v, want zero placeholder score", versions[0].Score)
+	}
+}
+
+func TestListVersionsPyPI_EmptyBatchResponsePreservesCandidates(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{
+				"releases": {
+					"1.0.1": [{"upload_time_iso_8601":"2024-03-02T00:00:00Z","yanked":false}],
+					"1.0.0": [{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]
+				}
+			}`), nil
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `{"_type":"summary"}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	versions, err := prov.ListVersions(context.Background(), api.EcosystemPyPI, "demo")
+	if err != nil {
+		t.Fatalf("ListVersions() error = %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("len(versions) = %d, want 2", len(versions))
+	}
+	if versions[0].Version != "1.0.1" || versions[1].Version != "1.0.0" {
+		t.Fatalf("versions = %#v, want [1.0.1 1.0.0]", versions)
+	}
+	if versions[0].Score.SupplyChain != 0 || versions[0].Score.Overall != 0 {
+		t.Fatalf("head version score = %+v, want zero placeholder score", versions[0].Score)
+	}
+	if versions[1].Score.SupplyChain != 0 || versions[1].Score.Overall != 0 {
+		t.Fatalf("tail version score = %+v, want zero placeholder score", versions[1].Score)
 	}
 }
 

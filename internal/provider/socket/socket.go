@@ -206,9 +206,6 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 		if err != nil {
 			return nil, err
 		}
-		if len(scored) == 0 {
-			return nil, provider.ErrUnsupportedSource
-		}
 
 		versions := make([]api.VersionInfo, 0, limit)
 		for _, entry := range ordered[:limit] {
@@ -789,6 +786,7 @@ var (
 	pep440PrePattern     = regexp.MustCompile(`^(?:[._-]?)(a|b|rc|c|alpha|beta|pre|preview)(\d*)`)
 	pep440PostPattern    = regexp.MustCompile(`^(?:[._-]?)(post|rev|r)(\d*)|^-(\d+)`)
 	pep440DevPattern     = regexp.MustCompile(`^(?:[._-]?dev)(\d*)`)
+	pep503NamePattern    = regexp.MustCompile(`[-_.]+`)
 )
 
 // orderedVersions returns versions sorted newest-first using publish times.
@@ -865,8 +863,16 @@ func buildPurl(ecosystem api.Ecosystem, name, version string) (string, error) {
 		return "", fmt.Errorf("unsupported purl ecosystem %q", ecosystem)
 	}
 
+	if ecosystem == api.EcosystemPyPI {
+		name = normalizePyPIName(name)
+	}
+
 	eco := purlEcosystem(ecosystem)
 	return fmt.Sprintf("pkg:%s/%s@%s", eco, name, version), nil
+}
+
+func normalizePyPIName(name string) string {
+	return pep503NamePattern.ReplaceAllString(strings.ToLower(name), "-")
 }
 
 func wrapPurlRequestError(action string, err error) error {
