@@ -1,6 +1,6 @@
 {
   "name": "attach-guard",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Supply-chain security guard that intercepts package install commands across npm, pnpm, pip, go, and cargo ecosystems and enforces package risk policies before execution.",
   "author": {
     "name": "Attach.dev"
