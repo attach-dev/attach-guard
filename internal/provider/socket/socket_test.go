@@ -395,7 +395,7 @@ func TestGetScoreByPurl_AggregatesWorstCaseAcrossArtifacts(t *testing.T) {
 	}
 }
 
-func TestGetScoreByPurl_MissingArtifactReturnsUnsupportedSource(t *testing.T) {
+func TestGetScoreByPurl_MissingArtifactReturnsScoringError(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path != "/v0/purl" {
 			t.Fatalf("unexpected path %q", req.URL.Path)
@@ -403,9 +403,15 @@ func TestGetScoreByPurl_MissingArtifactReturnsUnsupportedSource(t *testing.T) {
 		return newHTTPResponse(http.StatusOK, `{"_type":"purlError","message":"not found"}`), nil
 	})
 
-	_, err := prov.getScoreByPurl(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")
-	if !errors.Is(err, provider.ErrUnsupportedSource) {
-		t.Fatalf("getScoreByPurl() error = %v, want ErrUnsupportedSource", err)
+	_, err := prov.getScoreByPurl(context.Background(), api.EcosystemGo, "example.com/mod", "v1.2.3")
+	if err == nil {
+		t.Fatal("getScoreByPurl() expected error for missing artifact, got nil")
+	}
+	if errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatal("getScoreByPurl() should not return ErrUnsupportedSource for public ecosystems")
+	}
+	if !strings.Contains(err.Error(), "no score returned") {
+		t.Fatalf("getScoreByPurl() error = %v, want 'no score returned' message", err)
 	}
 }
 
@@ -625,7 +631,10 @@ func TestListVersionsPyPI_BatchPurlErrorPreservesCandidates(t *testing.T) {
 	}
 }
 
-func TestGetPackageScoreGo_TreatsMissingPurlResultAsUnsupportedSource(t *testing.T) {
+func TestGetPackageScoreGo_TreatsMissingPurlResultAsScoringError(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Path != "/v0/purl" {
 			t.Fatalf("unexpected path %q", req.URL.Path)
@@ -633,9 +642,12 @@ func TestGetPackageScoreGo_TreatsMissingPurlResultAsUnsupportedSource(t *testing
 		return newHTTPResponse(http.StatusOK, `{"_type":"summary"}`), nil
 	})
 
-	_, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "private.example.com/mod", "v1.2.3")
-	if !errors.Is(err, provider.ErrUnsupportedSource) {
-		t.Fatalf("GetPackageScore() error = %v, want ErrUnsupportedSource", err)
+	_, err := prov.GetPackageScore(context.Background(), api.EcosystemGo, "example.com/mod", "v1.2.3")
+	if err == nil {
+		t.Fatal("GetPackageScore() expected error for missing purl result, got nil")
+	}
+	if errors.Is(err, provider.ErrUnsupportedSource) {
+		t.Fatal("GetPackageScore() should not return ErrUnsupportedSource for public Go modules")
 	}
 }
 

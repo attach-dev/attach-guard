@@ -166,7 +166,12 @@ func (p *Provider) getScoreByPurl(ctx context.Context, ecosystem api.Ecosystem, 
 
 	info, ok := infos[version]
 	if !ok {
-		return nil, provider.ErrUnsupportedSource
+		// The purl endpoint returned no artifact for this version.
+		// For public ecosystems (PyPI/Go/Cargo) this is a score-fetch
+		// failure, not an unsupported source — return a plain error so
+		// the selector treats it as fail-closed (deny) rather than
+		// fail-open (allow with "source not supported").
+		return nil, fmt.Errorf("no score returned by purl endpoint for %s@%s", name, version)
 	}
 
 	meta, err := p.lookupVersionMetadata(ctx, ecosystem, name, version)
