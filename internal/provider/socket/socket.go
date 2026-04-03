@@ -204,7 +204,9 @@ func (p *Provider) ListVersions(ctx context.Context, ecosystem api.Ecosystem, na
 	if ecosystem != api.EcosystemNPM && ecosystem != api.EcosystemPNPM {
 		scored, err := p.batchScoreByPurl(ctx, ecosystem, name, ordered[:limit])
 		if err != nil {
-			return nil, err
+			// Preserve ordered candidates with zero-score placeholders when
+			// purl scoring fails, matching the existing npm fallback behavior.
+			scored = map[string]*api.VersionInfo{}
 		}
 
 		versions := make([]api.VersionInfo, 0, limit)
