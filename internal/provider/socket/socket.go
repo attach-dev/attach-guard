@@ -881,14 +881,12 @@ func parsePurlResponse(body []byte, requestedByPurl map[string]string) (map[stri
 	aggregated := make(map[string]*api.VersionInfo, len(requestedByPurl))
 	seenAlerts := make(map[string]map[string]struct{}, len(requestedByPurl))
 
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	scanner.Buffer(make([]byte, 1024), 1024*1024)
-	for scanner.Scan() {
-		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 {
-			continue
-		}
+	lines, err := purlResponseLines(body)
+	if err != nil {
+		return nil, err
+	}
 
+	for _, line := range lines {
 		var meta purlLineType
 		if err := json.Unmarshal(line, &meta); err != nil {
 			return nil, err
@@ -934,11 +932,84 @@ func parsePurlResponse(body []byte, requestedByPurl map[string]string) (map[stri
 		}
 	}
 
+	return aggregated, nil
+}
+
+func purlResponseLines(body []byte) ([][]byte, error) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+
+	switch trimmed[0] {
+	case '[':
+		var entries []json.RawMessage
+		if err := json.Unmarshal(trimmed, &entries); err != nil {
+			return nil, err
+		}
+		return rawMessagesToLines(entries), nil
+	case '{':
+		if lines, ok, err := tryParseStructuredPurlJSON(trimmed); ok || err != nil {
+			return lines, err
+		}
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+
+	var lines [][]byte
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, append([]byte(nil), line...))
+	}
+
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	return lines, nil
+}
 
-	return aggregated, nil
+func tryParseStructuredPurlJSON(body []byte) ([][]byte, bool, error) {
+	var container struct {
+		Results    []json.RawMessage `json:"results"`
+		Components []json.RawMessage `json:"components"`
+		Items      []json.RawMessage `json:"items"`
+		Artifacts  []json.RawMessage `json:"artifacts"`
+	}
+	if err := json.Unmarshal(body, &container); err != nil {
+		if bytes.ContainsRune(body, '\n') {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	switch {
+	case len(container.Results) > 0:
+		return rawMessagesToLines(container.Results), true, nil
+	case len(container.Components) > 0:
+		return rawMessagesToLines(container.Components), true, nil
+	case len(container.Items) > 0:
+		return rawMessagesToLines(container.Items), true, nil
+	case len(container.Artifacts) > 0:
+		return rawMessagesToLines(container.Artifacts), true, nil
+	default:
+		return [][]byte{append([]byte(nil), body...)}, true, nil
+	}
+}
+
+func rawMessagesToLines(messages []json.RawMessage) [][]byte {
+	lines := make([][]byte, 0, len(messages))
+	for _, message := range messages {
+		line := bytes.TrimSpace(message)
+		if len(line) == 0 {
+			continue
+		}
+		lines = append(lines, append([]byte(nil), line...))
+	}
+	return lines
 }
 
 func purlArtifactVersion(artifact purlArtifact, requestedByPurl map[string]string) (string, bool) {

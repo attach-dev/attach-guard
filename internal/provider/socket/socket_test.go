@@ -309,6 +309,64 @@ func TestGetScoreByPurl_ParsesNDJSON(t *testing.T) {
 	}
 }
 
+func TestGetScoreByPurl_ParsesJSONArrayResponse(t *testing.T) {
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `[
+				{"inputPurl":"pkg:pypi/litellm@1.82.8","version":"1.82.8","score":{"supplyChain":0.73,"overall":0.81}},
+				{"_type":"summary"}
+			]`), nil
+		case req.Method == http.MethodGet && req.URL.Host == "pypi.org":
+			return newHTTPResponse(http.StatusOK, `{"releases":{"1.82.8":[{"upload_time_iso_8601":"2024-03-01T00:00:00Z","yanked":false}]}}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemPyPI, "litellm", "1.82.8")
+	if err != nil {
+		t.Fatalf("getScoreByPurl() error = %v", err)
+	}
+	if info.Score.SupplyChain != 73 || info.Score.Overall != 81 {
+		t.Fatalf("score = %+v, want supply=73 overall=81", info.Score)
+	}
+}
+
+func TestGetScoreByPurl_ParsesPrettyPrintedJSONObjectResponse(t *testing.T) {
+	t.Setenv("GOPRIVATE", "")
+	t.Setenv("GONOPROXY", "")
+	t.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
+	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case req.Method == http.MethodPost && req.URL.Path == "/v0/purl":
+			return newHTTPResponse(http.StatusOK, `{
+				"inputPurl": "pkg:golang/example.com/mod@v1.2.3",
+				"version": "v1.2.3",
+				"score": {
+					"supplyChain": 0.90,
+					"overall": 0.80
+				}
+			}`), nil
+		case req.Method == http.MethodGet && req.URL.Path == "/example.com/mod/@v/v1.2.3.info":
+			return newHTTPResponse(http.StatusOK, `{"Version":"v1.2.3","Time":"2024-03-01T00:00:00Z"}`), nil
+		default:
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL.String())
+			return nil, nil
+		}
+	})
+
+	info, err := prov.getScoreByPurl(context.Background(), api.EcosystemGo, "example.com/mod", "v1.2.3")
+	if err != nil {
+		t.Fatalf("getScoreByPurl() error = %v", err)
+	}
+	if info.Score.SupplyChain != 90 || info.Score.Overall != 80 {
+		t.Fatalf("score = %+v, want supply=90 overall=80", info.Score)
+	}
+}
+
 func TestGetScoreByPurl_AggregatesWorstCaseAcrossArtifacts(t *testing.T) {
 	prov := newTestProvider(func(req *http.Request) (*http.Response, error) {
 		switch {
