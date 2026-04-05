@@ -25,10 +25,12 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	var preActionFlags []string
 	actionIdx := -1
+	actionVerb := ""
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
-		if tok == "get" {
+		if tok == "get" || tok == "install" {
 			actionIdx = i
+			actionVerb = tok
 			break
 		}
 		if strings.HasPrefix(tok, "-") {
@@ -47,7 +49,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	cmd := &api.ParsedCommand{
 		PackageManager: "go",
-		Action:         "get",
+		Action:         actionVerb,
 		PreActionFlags: preActionFlags,
 		IsInstall:      true,
 		RawCommand:     rawCommand,

@@ -337,6 +337,22 @@ func looksLikeInstallTokens(tokens []string) bool {
 			continue
 		}
 
+		// uv — only treat as wrapper when followed by "pip"
+		if base == "uv" {
+			i++
+			// Skip uv flags
+			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
+				i++
+			}
+			if i < len(tokens) && filepath.Base(tokens[i]) == "pip" {
+				// Now tokens[i] == "pip", continue scanning from there
+				// so the next iteration finds pip in pmBinaries
+				continue
+			}
+			// Not "uv pip ..." — not a guarded command
+			return false
+		}
+
 		// Known wrapper — skip it and its flags
 		if transparentWrappers[base] {
 			i++
@@ -504,6 +520,22 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 			// No -c found or ran out of tokens — not a wrapper we handle
 			result.tokens = saved
 			return result
+		}
+
+		// uv — only transparent when followed by "pip" (uv pip install ...).
+		// Other uv subcommands (uv add, uv sync) are not guarded.
+		if base == "uv" {
+			result.tokens = result.tokens[1:]
+			// Skip uv flags (e.g., uv --quiet pip install ...)
+			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
+				result.tokens = result.tokens[1:]
+			}
+			if len(result.tokens) > 0 && filepath.Base(result.tokens[0]) == "pip" {
+				// Strip "uv", leaving ["pip", "install", ...] for the pip parser
+				continue
+			}
+			// Not "uv pip ..." — not guarded, stop unwrapping
+			return unwrapResult{}
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags
