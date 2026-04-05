@@ -397,6 +397,7 @@ func TestLooksLikeInstall(t *testing.T) {
 		`"/Users/me/.claude/plugins/attach-dev/plugin/hooks/bin/attach-guard-darwin-arm64" evaluate npm install axios`,
 		"uv sync",
 		"uv add requests",
+		"uv",
 	}
 	for _, cmd := range safe {
 		if LooksLikeInstall(cmd) {

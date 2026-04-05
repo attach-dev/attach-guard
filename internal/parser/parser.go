@@ -340,6 +340,9 @@ func looksLikeInstallTokens(tokens []string) bool {
 		// uv — only treat as wrapper when followed by "pip"
 		if base == "uv" {
 			i++
+			if i >= len(tokens) {
+				return false
+			}
 			// Skip uv flags
 			for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
 				i++

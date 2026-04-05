@@ -38,6 +38,7 @@ func TestParse(t *testing.T) {
 		{"install git deferred", []string{"cargo", "install", "--git", "https://github.com/user/repo"}, false, 0, "", "", false, true, true},
 		{"install path deferred", []string{"cargo", "install", "--path", "./local"}, false, 0, "", "", false, true, false},
 		{"bare install", []string{"cargo", "install"}, false, 0, "", "", false, false, false},
+		{"add with version flag ignored", []string{"cargo", "add", "serde", "--version", "1.0.0"}, false, 1, "serde", "1.0.0", true, false, false},
 	}
 
 	for _, tt := range tests {
