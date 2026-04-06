@@ -172,6 +172,8 @@ func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
 		"strace pip --proxy http://proxy.example install flask",
 		"strace pip -i https://custom.example/simple install flask",
 		"strace cargo --color always add serde",
+		"strace cargo --mystery value install ripgrep",
+		"strace uv --project /tmp pip install requests",
 		"strace bash -c 'npm install axios'",
 		"nohup bash -lc 'npm install lodash'",
 	}
@@ -395,7 +397,10 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		"pip install dist/pkg.whl",
 		"pip install file:///tmp/pkg.whl",
 		"go get ./...",
+		"go install ./...",
+		"go install .",
 		"cargo add --path ./local-crate",
+		"cargo install --path ./local-crate",
 		"python -m pip install requests",
 	}
 
@@ -447,6 +452,16 @@ func TestEvaluate_LocalFindLinksForcesManualReview(t *testing.T) {
 func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
+	mock.AddVersion("ripgrep", api.VersionInfo{
+		Version:     "14.0.0",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 91},
+	})
+	mock.AddVersion("fd-find", api.VersionInfo{
+		Version:     "8.7.1",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 94, Overall: 90},
+	})
 
 	tests := []string{
 		"pip --proxy http://proxy.example install flask",
@@ -467,6 +482,9 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		"cargo add serde --registry internal",
 		"cargo add serde --registry=internal",
 		"cargo add serde@1.0.200",
+		"cargo install --git https://github.com/user/repo",
+		"cargo install ripgrep fd-find --version 1.2.3",
+		"cargo --mystery value install ripgrep",
 		"go get golang.org/x/net@upgrade",
 		"GOPRIVATE=private.example.com go get private.example.com/mod",
 	}
@@ -500,6 +518,11 @@ func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
 		PublishedAt: time.Now().Add(-48 * time.Hour),
 		Score:       api.PackageScore{SupplyChain: 94, Overall: 90},
 	})
+	mock.AddVersion("ripgrep", api.VersionInfo{
+		Version:     "14.0.0",
+		PublishedAt: time.Now().Add(-48 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 91},
+	})
 
 	tests := []string{
 		"pip install --upgrade flask",
@@ -507,6 +530,8 @@ func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
 		"cargo --color always add serde",
 		"cargo --color=always add serde",
 		"cargo add --optional serde",
+		"cargo --color always install ripgrep",
+		"cargo --color=always install ripgrep",
 	}
 
 	eval := NewEvaluator(cfg, mock)
@@ -645,6 +670,16 @@ func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 		PublishedAt: time.Now().Add(-240 * time.Hour),
 		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
 	})
+	mock.AddVersion("golang.org/x/tools/cmd/godoc", api.VersionInfo{
+		Version:     "v0.21.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("golang.org/x/tools/cmd/godoc", api.VersionInfo{
+		Version:     "v0.20.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
 	mock.AddVersion("serde", api.VersionInfo{
 		Version:     "1.0.201",
 		PublishedAt: time.Now().Add(-1 * time.Hour),
@@ -652,6 +687,16 @@ func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 	})
 	mock.AddVersion("serde", api.VersionInfo{
 		Version:     "1.0.200",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+	mock.AddVersion("ripgrep", api.VersionInfo{
+		Version:     "14.1.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("ripgrep", api.VersionInfo{
+		Version:     "14.0.0",
 		PublishedAt: time.Now().Add(-240 * time.Hour),
 		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
 	})
@@ -663,6 +708,8 @@ func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 		{"pip install requests", "pip install requests==2.31.0"},
 		{"go get golang.org/x/net", "go get golang.org/x/net@v0.25.0"},
 		{"cargo add serde", "cargo add serde@=1.0.200"},
+		{"go install golang.org/x/tools/cmd/godoc", "go install golang.org/x/tools/cmd/godoc@v0.20.0"},
+		{"cargo install ripgrep", "cargo install ripgrep@=14.0.0"},
 	}
 
 	eval := NewEvaluator(cfg, mock)
@@ -677,6 +724,73 @@ func TestEvaluate_NewPackageManagersCanRewrite(t *testing.T) {
 		if result.RewrittenCommand != tt.expected {
 			t.Errorf("expected rewritten command %q, got %q", tt.expected, result.RewrittenCommand)
 		}
+	}
+}
+
+func TestEvaluate_UVPipValueTakingGlobalFlagsStillEvaluatePackages(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.31.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	tests := []string{
+		"uv --project /tmp pip install requests",
+		"uv --directory=/tmp pip install requests",
+		"uv -p 3.13 pip install requests",
+		"uv pip install -p 3.13 requests",
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	for _, cmd := range tests {
+		result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("expected Allow for %q, got %s: %s", cmd, result.Decision, result.Reason)
+		}
+		if len(result.Packages) != 1 || result.Packages[0].Name != "requests" {
+			t.Fatalf("expected requests to be evaluated for %q, got %#v", cmd, result.Packages)
+		}
+		if result.RewrittenCommand != "" {
+			t.Fatalf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
+		}
+	}
+}
+
+func TestEvaluate_UVPipInstallNeedsManualReviewWhenRewriteRequired(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.AutoRewriteUnpinned.Local = true
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.32.0",
+		PublishedAt: time.Now().Add(-1 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 90, Overall: 88},
+	})
+	mock.AddVersion("requests", api.VersionInfo{
+		Version:     "2.31.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 92, Overall: 90},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "uv --project /tmp pip install requests", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.RewrittenCommand != "" {
+		t.Fatalf("expected no rewrite, got %q", result.RewrittenCommand)
+	}
+	if !strings.Contains(result.Reason, "could not be safely rewritten") {
+		t.Fatalf("expected safe-rewrite reason, got %q", result.Reason)
 	}
 }
 

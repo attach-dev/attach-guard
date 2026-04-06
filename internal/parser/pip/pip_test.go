@@ -31,6 +31,8 @@ func TestParse(t *testing.T) {
 		{"mixed parsed and skipped", []string{"pip", "install", ".", "flask"}, false, "pip", 1, "flask", "", false, true, false},
 		{"upgrade boolean flag", []string{"pip", "install", "--upgrade", "flask"}, false, "pip", 1, "flask", "", false, false, false},
 		{"short upgrade boolean flag", []string{"pip", "install", "-U", "flask"}, false, "pip", 1, "flask", "", false, false, false},
+		{"uv python short flag shape", []string{"pip", "install", "-p", "3.13", "requests"}, false, "pip", 1, "requests", "", false, false, false},
+		{"uv python long flag shape", []string{"pip", "install", "--python", "3.13", "requests"}, false, "pip", 1, "requests", "", false, false, false},
 		{"range deferred", []string{"pip", "install", "requests>=2.0"}, false, "pip", 0, "", "", false, true, true},
 		{"extras deferred", []string{"pip", "install", "requests[security]"}, false, "pip", 0, "", "", false, true, true},
 		{"index url disqualifies public lookup", []string{"pip", "install", "flask", "--index-url", "https://custom.pypi.org/simple"}, false, "pip", 0, "", "", false, true, true},

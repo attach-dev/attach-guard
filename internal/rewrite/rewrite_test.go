@@ -128,6 +128,19 @@ func TestCommand(t *testing.T) {
 			expected: "go get -u golang.org/x/net@v0.25.0",
 		},
 		{
+			name: "go install rewrite keeps flags before package args",
+			cmd: &api.ParsedCommand{
+				PackageManager: "go",
+				Action:         "install",
+				Flags:          []string{"-x"},
+				Packages: []api.PackageRequest{
+					{Name: "golang.org/x/tools/cmd/godoc", RawSpec: "golang.org/x/tools/cmd/godoc"},
+				},
+			},
+			versions: map[string]string{"golang.org/x/tools/cmd/godoc": "v0.20.0"},
+			expected: "go install -x golang.org/x/tools/cmd/godoc@v0.20.0",
+		},
+		{
 			name: "cargo rewrite uses exact requirement syntax",
 			cmd: &api.ParsedCommand{
 				PackageManager: "cargo",
@@ -138,6 +151,18 @@ func TestCommand(t *testing.T) {
 			},
 			versions: map[string]string{"serde": "1.0.200"},
 			expected: "cargo add serde@=1.0.200",
+		},
+		{
+			name: "cargo install rewrite uses exact requirement syntax",
+			cmd: &api.ParsedCommand{
+				PackageManager: "cargo",
+				Action:         "install",
+				Packages: []api.PackageRequest{
+					{Name: "ripgrep", RawSpec: "ripgrep"},
+				},
+			},
+			versions: map[string]string{"ripgrep": "14.0.0"},
+			expected: "cargo install ripgrep@=14.0.0",
 		},
 	}
 

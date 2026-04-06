@@ -12,14 +12,17 @@ var localArchiveSuffixes = []string{
 }
 
 // ShouldConsumeUnknownLongFlagValue returns true when an unknown long flag is
-// followed by a likely value token instead of another flag or the action verb.
-func ShouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, stopAt string) bool {
+// followed by a likely value token instead of another flag or one of the stop
+// tokens (typically action verbs like "install" or "add").
+func ShouldConsumeUnknownLongFlagValue(flag string, tokens []string, idx int, stopAts ...string) bool {
 	if !strings.HasPrefix(flag, "--") || strings.Contains(flag, "=") || idx+1 >= len(tokens) {
 		return false
 	}
 	next := tokens[idx+1]
-	if next == stopAt {
-		return false
+	for _, stopAt := range stopAts {
+		if next == stopAt {
+			return false
+		}
 	}
 	return !strings.HasPrefix(next, "-")
 }

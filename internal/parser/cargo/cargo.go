@@ -97,7 +97,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				preActionFlags = append(preActionFlags, tokens[i])
 				continue
 			}
-			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "add") {
+			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "add", "install") {
 				hasUnparsed = true
 				hasNonLocalUnparsed = true
 				i++
