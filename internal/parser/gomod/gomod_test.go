@@ -24,6 +24,14 @@ func TestParse(t *testing.T) {
 		{"prefix deferred", []string{"go", "get", "golang.org/x/net@v0.3"}, false, 0, "", "", false, true, true},
 		{"bare get", []string{"go", "get"}, false, 0, "", "", false, false, false},
 		{"not get", []string{"go", "build", "./..."}, true, 0, "", "", false, false, false},
+		{"install basic", []string{"go", "install", "golang.org/x/tools/cmd/godoc@latest"}, false, 1, "golang.org/x/tools/cmd/godoc", "", false, false, false},
+		{"install pinned", []string{"go", "install", "golang.org/x/tools/cmd/godoc@v0.20.0"}, false, 1, "golang.org/x/tools/cmd/godoc", "v0.20.0", true, false, false},
+		{"install unpinned", []string{"go", "install", "golang.org/x/tools/cmd/godoc"}, false, 1, "golang.org/x/tools/cmd/godoc", "", false, false, false},
+		{"install pre action directory", []string{"go", "-C", "./tools", "install", "golang.org/x/tools/cmd/godoc@latest"}, false, 1, "golang.org/x/tools/cmd/godoc", "", false, false, false},
+		{"install local", []string{"go", "install", "./..."}, false, 0, "", "", false, true, false},
+		{"install current module deferred", []string{"go", "install", "."}, false, 0, "", "", false, true, false},
+		{"install parent module deferred", []string{"go", "install", ".."}, false, 0, "", "", false, true, false},
+		{"bare install", []string{"go", "install"}, false, 0, "", "", false, false, false},
 	}
 
 	for _, tt := range tests {

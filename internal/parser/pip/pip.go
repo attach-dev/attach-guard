@@ -13,6 +13,8 @@ var flagsWithValue = map[string]bool{
 	"-i":                true,
 	"--index-url":       true,
 	"--extra-index-url": true,
+	"-p":                true,
+	"--python":          true,
 	"-c":                true,
 	"--constraint":      true,
 	"-f":                true,

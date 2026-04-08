@@ -30,6 +30,19 @@ func TestParse(t *testing.T) {
 		{"unknown flag safety", []string{"cargo", "add", "serde", "--mystery", "internal"}, false, 0, "", "", false, true, true},
 		{"bare add", []string{"cargo", "add"}, false, 0, "", "", false, false, false},
 		{"not add", []string{"cargo", "build"}, true, 0, "", "", false, false, false},
+		{"install basic", []string{"cargo", "install", "ripgrep"}, false, 1, "ripgrep", "", false, false, false},
+		{"install unknown pre action flag safety", []string{"cargo", "--mystery", "value", "install", "ripgrep"}, false, 0, "", "", false, true, true},
+		{"install pre action color", []string{"cargo", "--color", "always", "install", "ripgrep"}, false, 1, "ripgrep", "", false, false, false},
+		{"install pre action color assignment", []string{"cargo", "--color=always", "install", "ripgrep"}, false, 1, "ripgrep", "", false, false, false},
+		{"install pinned spec", []string{"cargo", "install", "ripgrep@=14.0.0"}, false, 1, "ripgrep", "14.0.0", true, false, false},
+		{"install version flag before package", []string{"cargo", "install", "--version", "14.0.0", "ripgrep"}, false, 1, "ripgrep", "14.0.0", true, false, false},
+		{"install version flag", []string{"cargo", "install", "ripgrep", "--version", "14.0.0"}, false, 1, "ripgrep", "14.0.0", true, false, false},
+		{"install version assignment", []string{"cargo", "install", "ripgrep", "--version=14.0.0"}, false, 1, "ripgrep", "14.0.0", true, false, false},
+		{"install version multi pkg ambiguous", []string{"cargo", "install", "ripgrep", "fd-find", "--version", "1.2.3"}, false, 2, "ripgrep", "", false, true, true},
+		{"install git deferred", []string{"cargo", "install", "--git", "https://github.com/user/repo"}, false, 0, "", "", false, true, true},
+		{"install path deferred", []string{"cargo", "install", "--path", "./local"}, false, 0, "", "", false, true, false},
+		{"bare install", []string{"cargo", "install"}, false, 0, "", "", false, false, false},
+		{"add with version flag ignored", []string{"cargo", "add", "serde", "--version", "1.0.0"}, false, 1, "serde", "1.0.0", true, false, false},
 	}
 
 	for _, tt := range tests {

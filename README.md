@@ -393,7 +393,7 @@ Quota resets hourly. For higher limits, see [Socket.dev pricing](https://socket.
 
 ## Current Limitations
 
-- Direct `pip` / `pip3`, `go get`, and `cargo add` are supported, but wrapper forms such as `python -m pip`, `uv pip`, `go install`, and `cargo install` are not yet guarded
+- Direct `pip` / `pip3` (including `uv pip`), `go get` / `go install`, and `cargo add` / `cargo install` are supported; `python -m pip` remains passthrough for now
 - pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
 - PyPI, Go, and Cargo scoring uses Socket's `POST /v0/purl` endpoint which has higher quota cost (100 units) compared to npm (10 units)
 - No transitive dependency analysis

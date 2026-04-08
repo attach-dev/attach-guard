@@ -29,6 +29,8 @@ var flagsWithValue = map[string]bool{
 	"--rev":           true,
 	"--git":           true,
 	"--path":          true,
+	"--version":       true,
+	"--root":          true,
 }
 
 var booleanFlags = map[string]bool{
@@ -45,6 +47,12 @@ var booleanFlags = map[string]bool{
 	"--quiet":               true,
 	"-v":                    true,
 	"--verbose":             true,
+	"--force":               true,
+	"-f":                    true,
+	"--no-track":            true,
+	"--list":                true,
+	"--debug":               true,
+	"--release":             true,
 }
 
 // Parse attempts to parse direct cargo add commands.
@@ -61,12 +69,14 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	var preActionFlags []string
 	actionIdx := -1
+	actionVerb := ""
 	hasUnparsed := false
 	hasNonLocalUnparsed := false
 	for i := 1; i < len(tokens); i++ {
 		tok := tokens[i]
-		if tok == "add" {
+		if tok == "add" || tok == "install" {
 			actionIdx = i
+			actionVerb = tok
 			break
 		}
 		if strings.HasPrefix(tok, "-") {
@@ -87,7 +97,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 				preActionFlags = append(preActionFlags, tokens[i])
 				continue
 			}
-			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "add") {
+			if parseutil.ShouldConsumeUnknownLongFlagValue(tok, tokens, i, "add", "install") {
 				hasUnparsed = true
 				hasNonLocalUnparsed = true
 				i++
@@ -108,7 +118,7 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 
 	cmd := &api.ParsedCommand{
 		PackageManager:          "cargo",
-		Action:                  "add",
+		Action:                  actionVerb,
 		PreActionFlags:          preActionFlags,
 		IsInstall:               true,
 		RawCommand:              rawCommand,
@@ -117,11 +127,12 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 	}
 
 	disqualify := hasUnparsed
+	versionFlag := "" // captures --version value for cargo install
 	for i := actionIdx + 1; i < len(tokens); i++ {
 		tok := tokens[i]
 		if strings.HasPrefix(tok, "-") {
 			cmd.Flags = append(cmd.Flags, tok)
-			if name, _, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+			if name, val, ok := parseutil.SplitLongFlagAssignment(tok); ok {
 				if booleanFlags[name] {
 					continue
 				}
@@ -136,6 +147,9 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 						disqualify = true
 						cmd.HasUnparsedArgs = true
 						cmd.Packages = nil
+					}
+					if name == "--version" {
+						versionFlag = val
 					}
 					continue
 				}
@@ -157,6 +171,9 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 					cmd.HasUnparsedArgs = true
 					cmd.Packages = nil
 				}
+				if tok == "--version" {
+					versionFlag = tokens[i]
+				}
 				continue
 			}
 			if isUnknownLongFlag(tok) {
@@ -174,6 +191,19 @@ func Parse(tokens []string, rawCommand string) *api.ParsedCommand {
 		if pkg, ok := parseSpec(tok); ok {
 			cmd.Packages = append(cmd.Packages, pkg)
 		} else {
+			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
+		}
+	}
+
+	// Apply --version flag to the package for cargo install.
+	// Only safe when exactly one package is present; with 0 or >1 packages
+	// the mapping is ambiguous so mark as unparsed to prevent bad rewrites.
+	if versionFlag != "" {
+		if len(cmd.Packages) == 1 && !cmd.Packages[0].Pinned {
+			cmd.Packages[0].Version = versionFlag
+			cmd.Packages[0].Pinned = true
+		} else if len(cmd.Packages) != 1 {
 			cmd.HasUnparsedArgs = true
 			cmd.HasNonLocalUnparsedArgs = true
 		}

@@ -8,6 +8,7 @@ import (
 	"github.com/attach-dev/attach-guard/internal/parser/cargo"
 	"github.com/attach-dev/attach-guard/internal/parser/gomod"
 	"github.com/attach-dev/attach-guard/internal/parser/npm"
+	"github.com/attach-dev/attach-guard/internal/parser/parseutil"
 	"github.com/attach-dev/attach-guard/internal/parser/pip"
 	"github.com/attach-dev/attach-guard/internal/parser/pnpm"
 	"github.com/attach-dev/attach-guard/pkg/api"
@@ -233,6 +234,50 @@ func isEnvSplitStringFlag(flag string) bool {
 	return flag == "-S" || flag == "--split-string"
 }
 
+func uvFlagTakesValue(flag string) bool {
+	switch flag {
+	case "-p", "--project", "--directory", "--python", "--config-file", "--cache-dir":
+		return true
+	default:
+		return false
+	}
+}
+
+func unwrapUVPipTokens(tokens []string) ([]string, bool) {
+	if len(tokens) == 0 || filepath.Base(tokens[0]) != "uv" {
+		return nil, false
+	}
+
+	rest := tokens[1:]
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
+		flag := rest[0]
+		rest = rest[1:]
+
+		flagName := flag
+		if name, _, ok := parseutil.SplitLongFlagAssignment(flag); ok {
+			flagName = name
+		}
+
+		if uvFlagTakesValue(flagName) {
+			if flagName == flag && len(rest) > 0 {
+				rest = rest[1:]
+			}
+			continue
+		}
+
+		if strings.HasPrefix(flag, "--") && !strings.Contains(flag, "=") &&
+			len(rest) > 0 && !strings.HasPrefix(rest[0], "-") &&
+			filepath.Base(rest[0]) != "pip" {
+			rest = rest[1:]
+		}
+	}
+
+	if len(rest) > 0 && filepath.Base(rest[0]) == "pip" {
+		return rest, true
+	}
+	return nil, false
+}
+
 // looksLikeInstallTokens checks if a flat token list contains a PM binary
 // followed by an install verb in a plausible command position.
 //
@@ -335,6 +380,18 @@ func looksLikeInstallTokens(tokens []string) bool {
 				break
 			}
 			continue
+		}
+
+		// uv — only treat as wrapper when followed by "pip"
+		if base == "uv" {
+			rest, ok := unwrapUVPipTokens(tokens[i:])
+			if ok {
+				tokens = rest
+				i = 0
+				continue
+			}
+			// Not "uv pip ..." — not a guarded command
+			return false
 		}
 
 		// Known wrapper — skip it and its flags
@@ -504,6 +561,18 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 			// No -c found or ran out of tokens — not a wrapper we handle
 			result.tokens = saved
 			return result
+		}
+
+		// uv — only transparent when followed by "pip" (uv pip install ...).
+		// Other uv subcommands (uv add, uv sync) are not guarded.
+		if base == "uv" {
+			if rest, ok := unwrapUVPipTokens(result.tokens); ok {
+				// Strip "uv", leaving ["pip", "install", ...] for the pip parser.
+				result.tokens = rest
+				continue
+			}
+			// Not "uv pip ..." — not guarded, stop unwrapping
+			return unwrapResult{}
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags

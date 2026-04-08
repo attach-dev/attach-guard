@@ -308,6 +308,14 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"sudo bash -c", "sudo bash -c 'npm install axios'", "axios"},
 		{"bash -c with chained cmds", "bash -c 'npm install axios && npm install lodash'", "axios"},
 		{"sh -c with semicolon chain", "sh -c 'npm install axios; echo done'", "axios"},
+		{"uv pip install", "uv pip install requests", "requests"},
+		{"uv --quiet pip install", "uv --quiet pip install requests", "requests"},
+		{"uv -p pip install", "uv -p 3.13 pip install requests", "requests"},
+		{"uv --project pip install", "uv --project /tmp pip install requests", "requests"},
+		{"uv --directory assignment pip install", "uv --directory=/tmp pip install requests", "requests"},
+		{"uv pip install python flag", "uv pip install -p 3.13 requests", "requests"},
+		{"uv pip install python assignment flag", "uv pip install --python 3.13 requests", "requests"},
+		{"sudo uv pip install", "sudo uv pip install requests", "requests"},
 	}
 
 	for _, tt := range tests {
@@ -337,6 +345,10 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		`echo "npm install axios"`,
 		"bash -c 'echo hello'",
 		"bash -c 'echo hello' npm install axios",
+		"uv add requests",
+		"uv sync",
+		"uv --project /tmp add requests",
+		"uv --directory=/tmp sync",
 	}
 	for _, cmd := range nonInstalls {
 		if result := Parse(cmd); result != nil {
@@ -359,6 +371,10 @@ func TestLooksLikeInstall(t *testing.T) {
 		"ltrace sh -c 'pnpm add react'",
 		"nohup bash -lc 'npm install lodash'",
 		"env -S 'npm install axios'",
+		"strace uv pip install requests",
+		"strace uv -p 3.13 pip install requests",
+		"strace uv --project /tmp pip install requests",
+		"strace uv --directory=/tmp pip install requests",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
@@ -389,6 +405,9 @@ func TestLooksLikeInstall(t *testing.T) {
 		"attach-guard evaluate npm install axios",
 		"/path/to/attach-guard-darwin-amd64 evaluate npm install axios",
 		`"/Users/me/.claude/plugins/attach-dev/plugin/hooks/bin/attach-guard-darwin-arm64" evaluate npm install axios`,
+		"uv sync",
+		"uv add requests",
+		"uv",
 	}
 	for _, cmd := range safe {
 		if LooksLikeInstall(cmd) {
@@ -410,6 +429,11 @@ func TestIsInstallCommand(t *testing.T) {
 		"pip install .",
 		"go get ./...",
 		"cargo add --git https://github.com/user/repo",
+		"go install golang.org/x/tools/cmd/godoc@latest",
+		"cargo install ripgrep",
+		"uv pip install requests",
+		"uv --project /tmp pip install requests",
+		"cargo install ripgrep --version 14.0.0",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {
@@ -428,6 +452,8 @@ func TestIsInstallCommand(t *testing.T) {
 		"pip --version",
 		"go build ./...",
 		"cargo build",
+		"uv add requests",
+		"uv sync",
 	}
 	for _, cmd := range nonInstallCmds {
 		if IsInstallCommand(cmd) {
@@ -468,6 +494,27 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"cargo deferred requirement", "cargo add serde@1.0.200", "cargo", 0, "", "", false, true, true},
 		{"cargo custom registry deferred", "cargo add serde --registry internal", "cargo", 0, "", "", false, true, true},
 		{"cargo custom registry assignment deferred", "cargo add serde --registry=internal", "cargo", 0, "", "", false, true, true},
+		{"go install pinned", "go install golang.org/x/tools/cmd/godoc@v0.20.0", "go", 1, "golang.org/x/tools/cmd/godoc", "v0.20.0", true, false, false},
+		{"go install unpinned", "go install golang.org/x/tools/cmd/godoc", "go", 1, "golang.org/x/tools/cmd/godoc", "", false, false, false},
+		{"go install local", "go install ./...", "go", 0, "", "", false, true, false},
+		{"go install current module dot", "go install .", "go", 0, "", "", false, true, false},
+		{"cargo install basic", "cargo install ripgrep", "cargo", 1, "ripgrep", "", false, false, false},
+		{"cargo install unknown pre action flag", "cargo --mystery value install ripgrep", "cargo", 0, "", "", false, true, true},
+		{"cargo install pre action color", "cargo --color always install ripgrep", "cargo", 1, "ripgrep", "", false, false, false},
+		{"cargo install pre action color assignment", "cargo --color=always install ripgrep", "cargo", 1, "ripgrep", "", false, false, false},
+		{"cargo install version before package", "cargo install --version 14.0.0 ripgrep", "cargo", 1, "ripgrep", "14.0.0", true, false, false},
+		{"cargo install path deferred", "cargo install --path ./local", "cargo", 0, "", "", false, true, false},
+		{"cargo install git deferred", "cargo install --git https://github.com/user/repo", "cargo", 0, "", "", false, true, true},
+		{"cargo install version flag", "cargo install ripgrep --version 14.0.0", "cargo", 1, "ripgrep", "14.0.0", true, false, false},
+		{"cargo install multi pkg version ambiguous", "cargo install ripgrep fd-find --version 1.2.3", "cargo", 2, "ripgrep", "", false, true, true},
+		{"uv pip install basic", "uv pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"uv pip install pinned", "uv pip install requests==2.31.0", "pip", 1, "requests", "2.31.0", true, false, false},
+		{"uv pip install python flag", "uv pip install -p 3.13 requests", "pip", 1, "requests", "", false, false, false},
+		{"uv pip install python long flag", "uv pip install --python 3.13 requests", "pip", 1, "requests", "", false, false, false},
+		{"uv wrapper python flag", "uv -p 3.13 pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"uv pip install project flag", "uv --project /tmp pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"uv pip install directory assignment", "uv --directory=/tmp pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"sudo uv pip install", "sudo uv pip install requests", "pip", 1, "requests", "", false, false, false},
 	}
 
 	for _, tt := range tests {
