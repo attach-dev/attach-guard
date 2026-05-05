@@ -14,11 +14,13 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 
 - Installs as a Claude Code plugin — no manual hook configuration needed
 - Intercepts `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands via PreToolUse hooks
-- Evaluates packages with a provider abstraction; the first-party default direction is [Attach Open Score](docs/OPEN_SCORE_PROVIDER.md)
-- Keeps Socket.dev as an explicit bring-your-own-token local provider, not a hosted/default scoring source
+- Evaluates packages with the configured provider before install commands run
+- Uses the current Socket.dev adapter only as an explicit bring-your-own-token local provider, not a hosted/default scoring source
 - Denies known malware and high-confidence dangerous packages automatically
-- Asks for confirmation on gray-band packages and provider-unavailable cases in local mode; planned Open Score integration should also ask/warn on `UNKNOWN` locally by default
+- Asks for confirmation on gray-band packages and provider-unavailable cases in local mode
 - Rewrites unpinned installs to safe pinned versions when possible
+
+Attach Open Score is the first-party provider direction and is not wired in yet; see [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) for the planned integration contract.
 - Logs every decision to a local JSONL audit trail
 
 ## Smart Version Replacement: Block Without Breaking Flow
@@ -33,8 +35,8 @@ When a risky version is blocked, attach-guard finds the newest version that pass
 > npm install axios
 
 attach-guard evaluates:
-  axios@1.14.1  -->  DENY (supply chain score 40, below threshold 50 — compromised version)
-  axios@1.14.0  -->  ALLOW (supply chain score 71, passes all policy checks)
+  axios@1.14.1  -->  DENY (known compromised version)
+  axios@1.14.0  -->  ALLOW (passes configured policy checks)
 
 Result: ASK + rewritten command
   "npm install axios@1.14.0"
@@ -53,7 +55,7 @@ Result: ASK + rewritten command
   "pip install litellm==1.82.6"
 ```
 
-These are real examples — attach-guard blocks compromised versions automatically based on their supply chain scores.
+These examples illustrate the current enforcement flow: attach-guard blocks known compromised or policy-failing versions and offers a safe pinned alternative when one is available.
 
 | Scenario | Example | Decision | What happens |
 |---|---|---|---|

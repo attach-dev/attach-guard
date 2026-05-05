@@ -34,6 +34,33 @@ Attach Open Score v0 emits uppercase public decisions:
 
 attach-guard currently has internal `allow`, `ask`, and `deny` decisions only. Until `unknown` becomes a first-class internal decision, Open Score `UNKNOWN` should map to `ask` at the provider/policy boundary for local mode. CI/team policy may map `UNKNOWN` to deny by explicit configuration.
 
+## Integration boundary
+
+The preferred v0 implementation should avoid forcing Open Score through the existing Socket-style `PackageScore` threshold path. Add an explicit verdict-carrying result at the provider/policy boundary, for example:
+
+```go
+type ProviderVerdict struct {
+    Decision   string   // ALLOW, ASK, DENY, UNKNOWN
+    RiskScore  *int     // Open Score risk score, higher means riskier
+    Reasons    []string // Open Score reason codes or rendered reason IDs
+    SourceRefs []string // source reference IDs/URLs safe for audit output
+}
+```
+
+Implementation options:
+
+1. Extend the provider result type so policy can consume `ProviderVerdict` directly.
+2. Add an Open Score-specific adapter layer that maps `ProviderVerdict` into attach-guard's internal decision before threshold scoring runs.
+3. Refactor policy input to be decision-first, with legacy Socket score thresholds handled as one provider-specific signal.
+
+Decision precedence should remain conservative:
+
+- explicit local/team denylist beats provider `ALLOW`
+- known malware or high-confidence critical evidence beats provider `ALLOW`
+- provider `DENY` blocks unless an explicit allowlist/policy override exists
+- provider `ASK` and `UNKNOWN` require confirmation locally and may fail policy in CI/team mode
+- provider unavailability maps to local ask/warn by default, not silent allow
+
 ## Score polarity warning
 
 Attach Open Score's numeric `score` is a risk score: higher means riskier.
@@ -48,7 +75,7 @@ Acceptable implementation patterns:
 2. **Explicit score transform** — if existing threshold code must be reused temporarily, transform `safety_score = 100 - risk_score` and add tests proving polarity for ALLOW/ASK/DENY/UNKNOWN fixtures.
 3. **Policy refactor** — make attach-guard policy understand decision-first verdicts and keep risk score as supporting context rather than the primary decision variable.
 
-The preferred v0 integration is verdict-first. Less room for accidental foot-guns. The foot-guns have had enough product-market fit.
+The preferred v0 integration is verdict-first. This leaves less room for accidental polarity inversions.
 
 ## Reason and source propagation
 
