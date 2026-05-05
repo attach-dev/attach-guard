@@ -14,11 +14,11 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 
 - Installs as a Claude Code plugin — no manual hook configuration needed
 - Intercepts `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands via PreToolUse hooks
-- Checks package scores, age, and alerts via Socket.dev
-- Denies known malware and low-score packages automatically
-- Asks for confirmation on gray-band packages
+- Evaluates packages with a provider abstraction; the first-party default direction is [Attach Open Score](docs/OPEN_SCORE_PROVIDER.md)
+- Keeps Socket.dev as an explicit bring-your-own-token local provider, not a hosted/default scoring source
+- Denies known malware and high-confidence dangerous packages automatically
+- Asks for confirmation on gray-band packages and provider-unavailable cases in local mode; planned Open Score integration should also ask/warn on `UNKNOWN` locally by default
 - Rewrites unpinned installs to safe pinned versions when possible
-- Fails closed when the provider is unavailable
 - Logs every decision to a local JSONL audit trail
 
 ## Smart Version Replacement: Block Without Breaking Flow
@@ -87,7 +87,7 @@ Security enforcement requires interception at the tool-call boundary, before exe
 
 ### Quick Start: Claude Code Plugin
 
-The fastest way to try attach-guard. Requires a [Socket.dev](https://socket.dev) API token (free tier available).
+The fastest way to try the current packaged plugin. Today's released plugin uses the local bring-your-own-token Socket.dev provider for real scoring. Attach Open Score is the first-party direction and is not wired in yet; Socket must not be treated as hosted/default Attach scoring.
 
 ```bash
 # Add the marketplace and install (one-time)
@@ -101,7 +101,7 @@ Or from within a Claude Code session:
 /plugin install attach-guard@attach-dev
 ```
 
-During installation or enablement, Claude Code will prompt for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev).
+During installation or enablement, the current Socket-backed plugin path prompts for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev). This token is for local BYO-provider use only.
 
 > **If the install/enable prompt didn't appear**, re-trigger it with:
 > ```bash
@@ -136,7 +136,7 @@ For use without the plugin system, or to install the binary globally.
 #### Prerequisites
 
 - [Go 1.21+](https://go.dev/dl/) (to build from source; not needed for the plugin install above)
-- A [Socket.dev](https://socket.dev) API token (free tier available)
+- A [Socket.dev](https://socket.dev) API token only when using the current Socket BYO-token provider path
 
 #### Step 1: Build and install the binary
 
@@ -164,7 +164,7 @@ attach-guard version
 # attach-guard v0.1.0
 ```
 
-#### Step 2: Set up your Socket API token
+#### Step 2: Set up a Socket API token for the current BYO-provider path
 
 ```bash
 export SOCKET_API_TOKEN="your-token-here"
@@ -275,9 +275,11 @@ attach-guard hook
 
 Default config location: `~/.attach-guard/config.yaml`
 
+Current provider configuration still defaults to the Socket adapter in code. Treat this as a legacy/local BYO-token default until the Attach Open Score provider lands; do not use Socket as hosted/default Attach scoring.
+
 ```yaml
 provider:
-  kind: socket                     # risk intelligence provider
+  kind: socket                     # explicit BYO-token local provider today; Open Score is the first-party direction
   api_token_env: SOCKET_API_TOKEN
 policy:
   deny_known_malware: true
@@ -334,11 +336,13 @@ Highest priority wins (later sources override earlier):
 ### Unpinned version handling
 
 When you run an unpinned supported command such as `npm install axios`, `pip install requests`, `go get golang.org/x/net`, or `cargo add serde`:
-- attach-guard fetches candidate versions from the matching registry and scores them via Socket.dev
+- attach-guard fetches candidate versions from the configured provider and evaluates them against policy
 - If the latest passes policy, the command runs as-is
 - If the latest fails but an older version passes, attach-guard suggests a rewrite using ecosystem-native syntax
 - In Claude Code mode: returns `ask` with the rewritten command via `updatedInput`
 - If no version passes, denies
+
+Attach Open Score integration should be verdict-first: `ALLOW` → allow, `ASK` → ask, `DENY` → deny, and `UNKNOWN` → ask/warn locally by default. CI/team policy may map unknowns to deny by explicit configuration. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md).
 
 ### Failure handling
 
@@ -365,9 +369,9 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 }
 ```
 
-## API Quota
+## Socket BYO-token provider quota
 
-attach-guard uses the [Socket.dev API](https://socket.dev) for package risk scoring. The free tier provides **500 quota units per hour**.
+The current Socket adapter uses the [Socket.dev API](https://socket.dev) when the user explicitly configures the BYO-token Socket provider. This section is for that local provider path only; Socket data must not be used as a default Attach Open Score input/source absent an explicit partnership.
 
 | Ecosystem | Endpoint | Cost per call |
 |---|---|---|
@@ -395,7 +399,8 @@ Quota resets hourly. For higher limits, see [Socket.dev pricing](https://socket.
 
 - Direct `pip` / `pip3` (including `uv pip`), `go get` / `go install`, and `cargo add` / `cargo install` are supported; `python -m pip` remains passthrough for now
 - pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
-- PyPI, Go, and Cargo scoring uses Socket's `POST /v0/purl` endpoint which has higher quota cost (100 units) compared to npm (10 units)
+- Current released provider implementation is Socket BYO-token/local; Attach Open Score first-party provider integration is the next direction
+- PyPI, Go, and Cargo scoring through the Socket BYO provider uses Socket's `POST /v0/purl` endpoint, which has higher quota cost (100 units) compared to npm (10 units)
 - No transitive dependency analysis
 - No lockfile graph support
 - Single provider at a time
