@@ -47,11 +47,7 @@ type ProviderVerdict struct {
 }
 ```
 
-Implementation options:
-
-1. Extend the provider result type so policy can consume `ProviderVerdict` directly.
-2. Add an Open Score-specific adapter layer that maps `ProviderVerdict` into attach-guard's internal decision before threshold scoring runs.
-3. Refactor policy input to be decision-first, with legacy Socket score thresholds handled as one provider-specific signal.
+For the next implementation pass, use option 1: extend the provider/policy result shape so policy can consume `ProviderVerdict` directly. Legacy Socket score thresholds should remain provider-specific signals, not the generic contract for Open Score.
 
 Decision precedence should remain conservative:
 
@@ -118,12 +114,23 @@ provider:
 ATTACH_GUARD_PROVIDER=mock
 ```
 
-Future provider kinds should make the default direction clear, for example:
+Future provider kind for this integration should be `open-score`.
 
 ```yaml
 provider:
   kind: open-score
+  endpoint: http://127.0.0.1:8757      # local or hosted Attach Open Score-compatible HTTP endpoint
+  timeout_seconds: 5
+policy:
+  unknown_behavior:
+    local: ask                         # ask | deny | allow
+    ci: deny
+  provider_unavailable_behavior:
+    local: ask                         # ask | deny | allow
+    ci: deny
 ```
+
+The v0 implementation target is an HTTP client provider. Embedded Go package or external CLI modes can be added later, but should not block the first provider pass.
 
 Socket provider docs should show explicit opt-in:
 
@@ -137,10 +144,12 @@ provider:
 
 Before adding code:
 
-- [ ] Decide provider kind name: `open-score` vs `attach-open-score`.
-- [ ] Decide whether Open Score runs as an embedded Go package, external CLI, or local/hosted HTTP API.
+- [x] Provider kind for the next pass: `open-score`.
+- [x] Runtime shape for the next pass: HTTP client provider against a local or hosted Attach Open Score-compatible endpoint.
+- [ ] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
 - [ ] Add fixture-driven tests using public-safe synthetic verdicts.
-- [ ] Test `UNKNOWN` mapping in local and CI modes.
+- [ ] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.
+- [ ] Test provider-unavailable behavior via `policy.provider_unavailable_behavior`.
 - [ ] Test score polarity so high-risk scores cannot accidentally become high-safety scores.
 - [ ] Preserve source/legal attribution in docs and audit output.
 - [ ] Keep Socket as explicit BYO-token/local provider.

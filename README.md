@@ -29,7 +29,7 @@ Most security tools just say "no." attach-guard says "no, but here's a safe alte
 
 When a risky version is blocked, attach-guard finds the newest version that passes policy and offers it as a replacement. Claude sees the safe alternative and can proceed immediately — your flow doesn't stop, it gets redirected to a safe path.
 
-**npm** — axios v1.14.1 and v0.30.4 were [compromised versions](https://socket.dev/blog/axios-npm-account-compromise) published via a hijacked maintainer account:
+**npm** — axios v1.14.1 and v0.30.4 were publicly reported compromised versions published via a hijacked maintainer account:
 
 ```
 > npm install axios
@@ -42,7 +42,7 @@ Result: ASK + rewritten command
   "npm install axios@1.14.0"
 ```
 
-**pip** — litellm v1.82.7 and v1.82.8 were [malicious versions](https://socket.dev/npm/package/litellm) published to PyPI:
+**pip** — litellm v1.82.7 and v1.82.8 were malicious versions published to PyPI:
 
 ```
 > pip install litellm
@@ -215,7 +215,7 @@ Try installing a known-compromised version to verify attach-guard blocks it:
 > Install axios@1.14.1
 
 Claude: I'll install axios@1.14.1.
-[attach-guard] deny: axios@1.14.1: supply chain score 40 is below minimum threshold 50
+[attach-guard] deny: axios@1.14.1: known compromised version
 ```
 
 Then try a safe version:
@@ -364,8 +364,8 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
   "package_manager": "npm",
   "original_command": "npm install axios@1.14.1",
   "decision": "deny",
-  "reason": "axios@1.14.1: supply chain score 40 is below minimum threshold 50",
-  "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.14.1","score":{"supply_chain":40,"overall":40}}],
+  "reason": "axios@1.14.1: known compromised version",
+  "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.14.1","verdict":"deny"}],
   "provider": "socket",
   "mode": "claude"
 }
