@@ -362,11 +362,11 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
   "user": "dev",
   "cwd": "/home/dev/project",
   "package_manager": "npm",
-  "original_command": "npm install axios@1.14.1",
+  "original_command": "npm install example-malware@1.0.0",
   "decision": "deny",
-  "reason": "axios@1.14.1: known compromised version",
-  "packages": [{"ecosystem":"npm","name":"axios","selected_version":"1.14.1","verdict":"deny"}],
-  "provider": "socket",
+  "reason": "example-malware@1.0.0: known malware alert",
+  "packages": [{"ecosystem":"npm","name":"example-malware","selected_version":"1.0.0","score":{"supply_chain":0,"overall":0},"alerts":[{"severity":"critical","title":"known malware","category":"malware"}]}],
+  "provider": "mock",
   "mode": "claude"
 }
 ```
@@ -386,9 +386,9 @@ The current Socket adapter uses the [Socket.dev API](https://socket.dev) when th
 - Pinned installs (e.g. `pip install litellm==1.82.8`) use one call to score a single version
 - Unpinned installs (e.g. `pip install litellm`) use one batch call to score up to 10 candidate versions
 
-**When quota is exhausted**, scoring calls fail and attach-guard falls back to zero scores. This means:
-- Pinned installs are **denied** (score 0 < threshold 50) — safe, fails closed
-- Unpinned installs show "no acceptable version found" instead of offering a safe alternative — the version rewrite feature requires real scores to identify which version passes policy
+**When quota is exhausted**, provider calls fail. In current behavior this means:
+- Pinned installs are **denied** because the provider could not return an acceptable evaluation — safe, fails closed
+- Unpinned installs show "no acceptable version found" instead of offering a safe alternative — the version rewrite feature requires real provider results to identify which version passes policy
 
 To check your remaining quota:
 ```bash
