@@ -36,7 +36,7 @@ raw command string
          │
          ▼
 ┌──────────┐
-│  Provider │ ── Socket adapter fetches scores, versions, alerts
+│  Provider │ ── scores, versions, alerts today; future Open Score integration maps verdicts
 └────┬─────┘
      │
      ▼
@@ -71,7 +71,12 @@ type Provider interface {
 }
 ```
 
-The Socket adapter normalizes Socket API responses into internal `VersionInfo` and `PackageScore` types. No Socket-specific types leak into the policy engine.
+Current implementation status:
+- the shipped adapter is Socket-backed and should be treated as an explicit local BYO-token provider
+- the first-party default direction is Attach Open Score; see [`docs/OPEN_SCORE_PROVIDER.md`](OPEN_SCORE_PROVIDER.md) for verdict mapping and source/legal constraints
+- no proprietary provider types should leak into the policy engine
+
+The current Socket adapter normalizes Socket API responses into internal `VersionInfo` and `PackageScore` types. Future Open Score integration should avoid directly mapping Open Score's risk score into the existing safety-score fields because the polarity is opposite; use verdict-first mapping or an explicit transform with tests.
 
 To add a new provider:
 1. Implement the `Provider` interface
