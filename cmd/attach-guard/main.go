@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -45,6 +46,8 @@ func main() {
 			fmt.Fprintf(os.Stderr, "unknown hook subcommand: %s\nusage: attach-guard hook [run]\n", os.Args[2])
 			os.Exit(exitCodeHookBlock)
 		}
+	case "run":
+		os.Exit(cmdRun(os.Args[2:], os.Stdout, os.Stderr))
 	case "config":
 		cmdConfig()
 	case "version":
@@ -64,9 +67,39 @@ func printUsage() {
 Commands:
   evaluate <command>   Evaluate a package manager command against policy
   hook [run]           Read Claude Code hook JSON from stdin and respond
+  run --dry-run <claude|codex> Preview an agent command without executing it
   config init          Write default config to ~/.attach-guard/config.yaml
   version              Print version
   help                 Show this help`)
+}
+
+// cmdRun handles agent-wrapper commands. The current public surface only
+// supports dry-run validation so it never executes agent binaries.
+func cmdRun(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 2 || args[0] != "--dry-run" {
+		fmt.Fprintln(stderr, "usage: attach-guard run --dry-run <claude|codex>")
+		return 1
+	}
+
+	agent := args[1]
+	wrappedCommand, ok := dryRunWrappedCommand(agent)
+	if !ok {
+		fmt.Fprintf(stderr, "unsupported agent: %s\n", agent)
+		fmt.Fprintln(stderr, "usage: attach-guard run --dry-run <claude|codex>")
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "dry-run: would run %s\n", strings.Join(wrappedCommand, " "))
+	return 0
+}
+
+func dryRunWrappedCommand(agent string) ([]string, bool) {
+	switch agent {
+	case "claude", "codex":
+		return []string{agent}, true
+	default:
+		return nil, false
+	}
 }
 
 // cmdEvaluate evaluates a command string passed as arguments.
