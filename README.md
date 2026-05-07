@@ -19,9 +19,9 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 - Denies known malware and high-confidence dangerous packages automatically
 - Asks for confirmation on gray-band packages and provider-unavailable cases in local mode
 - Rewrites unpinned installs to safe pinned versions when possible
-
-Attach Open Score is the first-party provider direction and is not wired in yet; see [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) for the planned integration contract.
 - Logs every decision to a local JSONL audit trail
+
+Attach Open Score is the first-party provider direction and is not wired in yet; see [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) for the planned integration contract, [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe local verification, and [the dogfood plan](docs/plans/2026-05-07-local-open-score-dogfood.md) for scope.
 
 ## Smart Version Replacement: Block Without Breaking Flow
 
@@ -395,9 +395,10 @@ The current Socket adapter uses the [Socket.dev API](https://socket.dev) when th
 - Pinned installs (e.g. `pip install litellm==1.82.8`) use one call to score a single version
 - Unpinned installs (e.g. `pip install litellm`) use one batch call to score up to 10 candidate versions
 
-**When quota is exhausted**, provider calls fail. In current behavior this means:
-- Pinned installs are **denied** because the provider could not return an acceptable evaluation — safe, fails closed
-- Unpinned installs show "no acceptable version found" instead of offering a safe alternative — the version rewrite feature requires real provider results to identify which version passes policy
+**When quota is exhausted**, provider calls fail. Current behavior depends on where the failure happens:
+- Provider startup/unavailability follows `provider_unavailable_behavior`; local defaults to ask/warn, and CI/team fail-closed behavior requires explicit configuration such as `provider_unavailable_behavior.ci: deny`.
+- Pinned installs can still fail closed if a score request errors after the provider is considered available; do not present quota exhaustion as guaranteed local ask/warn for every path.
+- Unpinned installs cannot offer a reliable safe-version rewrite because the rewrite feature requires real provider results to identify which version passes policy.
 
 To check your remaining quota:
 ```bash
