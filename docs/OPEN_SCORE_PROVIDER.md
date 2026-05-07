@@ -150,7 +150,8 @@ provider:
 ## Implementation checklist
 
 Current attach-guard code includes the verdict semantics layer. The networked
-Open Score provider/client remains a later implementation pass.
+Open Score provider/client remains a later implementation pass. See the phased
+plan in [`docs/plans/2026-05-07-open-score-provider-impl.md`](plans/2026-05-07-open-score-provider-impl.md).
 
 - [ ] Add provider kind for the next pass: `open-score`.
 - [ ] Add runtime shape for the next pass: HTTP client provider against a local or hosted Attach Open Score-compatible endpoint.
