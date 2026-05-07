@@ -7,7 +7,7 @@ Audience: attach-guard maintainers, Attach Open Score implementers, policy autho
 
 attach-guard should treat Attach Open Score as the first-party default scoring direction while keeping proprietary providers, including Socket, as bring-your-own-token local integrations unless an explicit partnership permits broader hosted/default use.
 
-This note defines how Attach Open Score verdicts should map into attach-guard behavior before code is added.
+This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer; the networked Open Score provider/client remains future work.
 
 ## Source and licensing posture
 
@@ -28,7 +28,7 @@ Attach Open Score v0 emits uppercase public decisions:
 | Attach Open Score | attach-guard behavior | Local default | CI/team default |
 |---|---|---|---|
 | `ALLOW` | allow install | allow | allow |
-| `ASK` | require review / user confirmation | ask/warn | configurable; often deny or require policy approval |
+| `ASK` | require review / user confirmation | ask/warn | ask/review; stricter team policy is future work |
 | `DENY` | block install | deny | deny |
 | `UNKNOWN` | insufficient evidence | ask/warn | configurable; often deny or require policy approval |
 
@@ -36,7 +36,7 @@ attach-guard currently has internal `allow`, `ask`, and `deny` decisions only. U
 
 ## Integration boundary
 
-The preferred v0 implementation should avoid forcing Open Score through the existing Socket-style `PackageScore` threshold path. Add an explicit verdict-carrying result at the provider/policy boundary, for example:
+The v0 implementation avoids forcing Open Score through the existing Socket-style `PackageScore` threshold path. attach-guard now carries explicit verdict data at the provider/policy boundary:
 
 ```go
 type ProviderVerdict struct {
@@ -47,15 +47,20 @@ type ProviderVerdict struct {
 }
 ```
 
-For the next implementation pass, use option 1: extend the provider/policy result shape so policy can consume `ProviderVerdict` directly. Legacy Socket score thresholds should remain provider-specific signals, not the generic contract for Open Score.
+Policy consumes `ProviderVerdict` directly when providers attach it to `VersionInfo`. Legacy Socket score thresholds remain provider-specific signals, not the generic contract for Open Score.
 
 Decision precedence should remain conservative:
 
 - explicit local/team denylist beats provider `ALLOW`
 - known malware or high-confidence critical evidence beats provider `ALLOW`
 - provider `DENY` blocks unless an explicit allowlist/policy override exists
-- provider `ASK` and `UNKNOWN` require confirmation locally and may fail policy in CI/team mode
+- provider `ASK` requires confirmation/review; provider `UNKNOWN` follows `policy.unknown_behavior` and may fail policy in CI/team mode
 - provider unavailability maps to local ask/warn by default, not silent allow
+
+Evaluation and audit output must preserve the provider verdict payload, including
+public-safe `source_refs`, so downstream explanation/audit UX can attribute OSV,
+GHSA, deps.dev, registry metadata, or other allowed public evidence instead of
+reducing decisions to an opaque allow/ask/deny.
 
 ## Score polarity warning
 
@@ -142,14 +147,15 @@ provider:
 
 ## Implementation checklist
 
-Before adding code:
+Current attach-guard code includes the verdict semantics layer. The networked
+Open Score provider/client remains a later implementation pass.
 
-- [x] Provider kind for the next pass: `open-score`.
-- [x] Runtime shape for the next pass: HTTP client provider against a local or hosted Attach Open Score-compatible endpoint.
-- [ ] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
-- [ ] Add fixture-driven tests using public-safe synthetic verdicts.
-- [ ] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.
+- [ ] Add provider kind for the next pass: `open-score`.
+- [ ] Add runtime shape for the next pass: HTTP client provider against a local or hosted Attach Open Score-compatible endpoint.
+- [x] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
+- [x] Add fixture-driven tests using public-safe synthetic verdicts.
+- [x] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.
 - [ ] Test provider-unavailable behavior via `policy.provider_unavailable_behavior`.
-- [ ] Test score polarity so high-risk scores cannot accidentally become high-safety scores.
+- [x] Test score polarity so high-risk scores cannot accidentally become high-safety scores.
 - [ ] Preserve source/legal attribution in docs and audit output.
 - [ ] Keep Socket as explicit BYO-token/local provider.

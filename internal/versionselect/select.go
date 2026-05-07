@@ -20,6 +20,8 @@ type Result struct {
 	UnsupportedSource bool
 	Decision          api.Decision // the policy decision for the selected version
 	Reason            string       // the policy reason for the selected version
+	RejectedReason    string       // first newer rejected candidate reason when selecting an older version
+	RejectedVerdict   *api.ProviderVerdict
 }
 
 // Selector picks the best acceptable version for an unpinned package.
@@ -60,6 +62,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 			RequestedSpec:     pkg.Version,
 			ResolvedVersion:   info.Version,
 			Score:             info.Score,
+			ProviderVerdict:   info.ProviderVerdict,
 			Alerts:            info.Alerts,
 			PublishedAt:       info.PublishedAt,
 			ProviderAvailable: true,
@@ -91,6 +94,8 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 	// First pass: find the newest version that gets Allow.
 	// Second pass: if none found, find the newest version that gets Ask.
 	var bestAsk *Result
+	var firstRejectedReason string
+	var firstRejectedVerdict *api.ProviderVerdict
 	for i, v := range versions {
 		if v.Deprecated {
 			continue
@@ -102,6 +107,7 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 			RequestedSpec:     pkg.Version,
 			ResolvedVersion:   v.Version,
 			Score:             v.Score,
+			ProviderVerdict:   v.ProviderVerdict,
 			Alerts:            v.Alerts,
 			PublishedAt:       v.PublishedAt,
 			ProviderAvailable: true,
@@ -112,18 +118,24 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 		decision := s.engine.Evaluate(input)
 		if decision.Decision == api.Allow {
 			return &Result{
-				Selected:     &versions[i],
-				WasRewritten: i > 0,
-				Decision:     api.Allow,
-				Reason:       decision.Reason,
+				Selected:       &versions[i],
+				WasRewritten:   i > 0,
+				Decision:       api.Allow,
+				Reason:         decision.Reason,
+				RejectedReason: firstRejectedReason,
 			}, nil
+		}
+		if firstRejectedReason == "" {
+			firstRejectedReason = decision.Reason
+			firstRejectedVerdict = v.ProviderVerdict
 		}
 		if decision.Decision == api.Ask && bestAsk == nil {
 			bestAsk = &Result{
-				Selected:     &versions[i],
-				WasRewritten: i > 0,
-				Decision:     api.Ask,
-				Reason:       decision.Reason,
+				Selected:       &versions[i],
+				WasRewritten:   i > 0,
+				Decision:       api.Ask,
+				Reason:         decision.Reason,
+				RejectedReason: firstRejectedReason,
 			}
 		}
 	}
@@ -133,5 +145,5 @@ func (s *Selector) Select(ctx context.Context, pkg api.PackageRequest, mode api.
 		return bestAsk, nil
 	}
 
-	return &Result{AllFailed: true, Decision: api.Deny, Reason: "all candidate versions fail policy"}, nil
+	return &Result{AllFailed: true, Decision: api.Deny, Reason: "all candidate versions fail policy", RejectedReason: firstRejectedReason, RejectedVerdict: firstRejectedVerdict}, nil
 }

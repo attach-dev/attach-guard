@@ -27,6 +27,7 @@ type Input struct {
 	RequestedSpec     string
 	ResolvedVersion   string
 	Score             api.PackageScore
+	ProviderVerdict   *api.ProviderVerdict
 	Alerts            []api.PackageAlert
 	PublishedAt       time.Time
 	ProviderAvailable bool
@@ -79,6 +80,10 @@ func (e *Engine) Evaluate(input Input) Output {
 		}
 	}
 
+	if input.ProviderVerdict != nil {
+		return e.evaluateProviderVerdict(input)
+	}
+
 	// Score-based decisions
 	sc := input.Score.SupplyChain
 	ov := input.Score.Overall
@@ -116,6 +121,63 @@ func (e *Engine) Evaluate(input Input) Output {
 	return Output{Decision: api.Allow, Reason: "package passes all policy checks"}
 }
 
+func (e *Engine) evaluateProviderVerdict(input Input) Output {
+	verdict := input.ProviderVerdict
+	decision := api.ProviderVerdictDecision(strings.ToUpper(strings.TrimSpace(string(verdict.Decision))))
+
+	switch decision {
+	case api.ProviderVerdictDeny:
+		return Output{
+			Decision: api.Deny,
+			Reason:   verdictReason(verdict, "Attach Open Score verdict DENY"),
+		}
+	case api.ProviderVerdictAsk:
+		return Output{
+			Decision: api.Ask,
+			Reason:   verdictReason(verdict, "Attach Open Score verdict ASK; review recommended"),
+		}
+	case api.ProviderVerdictUnknown:
+		return e.handleUnknownVerdict(input, verdict)
+	case api.ProviderVerdictAllow:
+		if hasCriticalOrHighAlert(input.Alerts) {
+			return Output{
+				Decision: api.Ask,
+				Reason:   "package version has critical or high severity alerts",
+			}
+		}
+		return Output{
+			Decision: api.Allow,
+			Reason:   verdictReason(verdict, "Attach Open Score verdict ALLOW"),
+		}
+	default:
+		return Output{
+			Decision: api.Ask,
+			Reason:   fmt.Sprintf("provider returned unrecognized verdict %q; manual review recommended", verdict.Decision),
+		}
+	}
+}
+
+func (e *Engine) handleUnknownVerdict(input Input, verdict *api.ProviderVerdict) Output {
+	behavior := e.cfg.Policy.UnknownBehavior.Local
+	if input.Mode == api.ModeCI {
+		behavior = e.cfg.Policy.UnknownBehavior.CI
+	}
+
+	output := configuredDecision(
+		behavior,
+		verdictReason(verdict, "Attach Open Score verdict UNKNOWN; policy requires deny in this mode"),
+		verdictReason(verdict, "Attach Open Score verdict UNKNOWN; manual review recommended"),
+		verdictReason(verdict, "Attach Open Score verdict UNKNOWN; policy allows in this mode"),
+	)
+	if output.Decision == api.Allow && hasCriticalOrHighAlert(input.Alerts) {
+		return Output{
+			Decision: api.Ask,
+			Reason:   "package version has critical or high severity alerts",
+		}
+	}
+	return output
+}
+
 // ProviderUnavailableDecision returns the decision for when the provider is unavailable.
 func (e *Engine) handleProviderUnavailable(mode api.Mode) Output {
 	behavior := e.cfg.Policy.ProviderUnavailable.Local
@@ -123,21 +185,30 @@ func (e *Engine) handleProviderUnavailable(mode api.Mode) Output {
 		behavior = e.cfg.Policy.ProviderUnavailable.CI
 	}
 
+	return configuredDecision(
+		behavior,
+		"risk provider is unavailable and policy requires deny in this mode",
+		"risk provider is unavailable; manual review recommended",
+		"risk provider is unavailable; policy allows in this mode",
+	)
+}
+
+func configuredDecision(behavior, denyReason, askReason, allowReason string) Output {
 	switch behavior {
 	case "deny":
 		return Output{
 			Decision: api.Deny,
-			Reason:   "risk provider is unavailable and policy requires deny in this mode",
+			Reason:   denyReason,
 		}
 	case "allow":
 		return Output{
 			Decision: api.Allow,
-			Reason:   "risk provider is unavailable; policy allows in this mode",
+			Reason:   allowReason,
 		}
 	default: // "ask"
 		return Output{
 			Decision: api.Ask,
-			Reason:   "risk provider is unavailable; manual review recommended",
+			Reason:   askReason,
 		}
 	}
 }
@@ -185,4 +256,11 @@ func hasCriticalOrHighAlert(alerts []api.PackageAlert) bool {
 		}
 	}
 	return false
+}
+
+func verdictReason(verdict *api.ProviderVerdict, fallback string) string {
+	if verdict == nil || len(verdict.Reasons) == 0 {
+		return fallback
+	}
+	return fmt.Sprintf("%s (%s)", fallback, strings.Join(verdict.Reasons, ", "))
 }

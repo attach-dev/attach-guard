@@ -27,6 +27,11 @@ func TestLogger_Log(t *testing.T) {
 				Name:            "axios",
 				SelectedVersion: "1.7.0",
 				Score:           api.PackageScore{SupplyChain: 92, Overall: 88},
+				ProviderVerdict: &api.ProviderVerdict{
+					Decision:   api.ProviderVerdictAllow,
+					Reasons:    []string{"safe-synthetic"},
+					SourceRefs: []string{"osv:GHSA-0000-0000-0000"},
+				},
 			},
 		},
 	})
@@ -59,6 +64,12 @@ func TestLogger_Log(t *testing.T) {
 	}
 	if len(entry.Packages) != 1 {
 		t.Errorf("expected 1 package, got %d", len(entry.Packages))
+	}
+	if entry.Packages[0].ProviderVerdict == nil {
+		t.Fatal("expected audit package to preserve provider verdict")
+	}
+	if got := entry.Packages[0].ProviderVerdict.SourceRefs; len(got) != 1 || got[0] != "osv:GHSA-0000-0000-0000" {
+		t.Fatalf("expected audit package to preserve source refs, got %#v", got)
 	}
 }
 

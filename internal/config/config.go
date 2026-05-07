@@ -32,6 +32,7 @@ type PolicyConfig struct {
 	GrayBandMinSupplyChain float64                   `yaml:"gray_band_min_supply_chain_score"`
 	MinimumPackageAgeHours int                       `yaml:"minimum_package_age_hours"`
 	ProviderUnavailable    ProviderUnavailableConfig `yaml:"provider_unavailable_behavior"`
+	UnknownBehavior        ProviderUnavailableConfig `yaml:"unknown_behavior"`
 	AutoRewriteUnpinned    AutoRewriteConfig         `yaml:"auto_rewrite_unpinned"`
 	Allowlist              []string                  `yaml:"allowlist"`
 	Denylist               []string                  `yaml:"denylist"`
@@ -77,6 +78,10 @@ func DefaultConfig() *Config {
 			GrayBandMinSupplyChain: 50,
 			MinimumPackageAgeHours: 48,
 			ProviderUnavailable: ProviderUnavailableConfig{
+				Local: "ask",
+				CI:    "deny",
+			},
+			UnknownBehavior: ProviderUnavailableConfig{
 				Local: "ask",
 				CI:    "deny",
 			},

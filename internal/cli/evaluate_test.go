@@ -50,6 +50,66 @@ func TestEvaluate_DenyPinnedLowScore(t *testing.T) {
 	}
 }
 
+func TestEvaluate_PinnedOpenScoreVerdictDeny(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	riskScore := 95
+
+	mock.Scores["risky-pkg@1.0.0"] = &api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:  api.ProviderVerdictDeny,
+			RiskScore: &riskScore,
+			Reasons:   []string{"high-risk-synthetic"},
+			SourceRefs: []string{
+				"osv:GHSA-0000-0000-0000",
+				"deps.dev:npm/risky-pkg/1.0.0",
+			},
+		},
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install risky-pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Deny {
+		t.Errorf("expected Deny from Open Score verdict, got %s: %s", result.Decision, result.Reason)
+	}
+	if len(result.Packages) != 1 || result.Packages[0].ProviderVerdict == nil {
+		t.Fatalf("expected package evaluation to preserve provider verdict, got %+v", result.Packages)
+	}
+	if got := result.Packages[0].ProviderVerdict.SourceRefs; len(got) != 2 || got[0] != "osv:GHSA-0000-0000-0000" {
+		t.Fatalf("expected provider source refs to be preserved for audit/explain output, got %#v", got)
+	}
+}
+
+func TestEvaluate_PinnedOpenScoreUnknownLocalAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.Scores["unknown-pkg@1.0.0"] = &api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+			Reasons:  []string{"insufficient-evidence-synthetic"},
+		},
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install unknown-pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Errorf("expected Ask from local UNKNOWN verdict, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
 func TestEvaluate_AskRewriteUnpinned(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
@@ -870,5 +930,130 @@ func TestEvaluate_GrayBandAsk(t *testing.T) {
 	}
 	if result.Decision != api.Ask {
 		t.Errorf("expected Ask for gray band package, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEvaluate_UnpinnedOpenScoreAskPreservesVerdictReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("review-pkg", api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAsk,
+			Reasons:  []string{"review-synthetic"},
+		},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install review-pkg", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for Open Score ASK verdict, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "Attach Open Score verdict ASK") || !strings.Contains(result.Reason, "review-synthetic") {
+		t.Fatalf("expected Open Score ASK reason to be preserved, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_UnpinnedOpenScoreUnknownPreservesVerdictReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("unknown-pkg", api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+			Reasons:  []string{"insufficient-evidence-synthetic"},
+		},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install unknown-pkg", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for Open Score UNKNOWN verdict, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "Attach Open Score verdict UNKNOWN") || !strings.Contains(result.Reason, "insufficient-evidence-synthetic") {
+		t.Fatalf("expected Open Score UNKNOWN reason to be preserved, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_UnpinnedOpenScoreAskThenOlderAllowPreservesRejectedReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("review-pkg", api.VersionInfo{
+		Version:     "2.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAsk,
+			Reasons:  []string{"review-synthetic"},
+		},
+	})
+	mock.AddVersion("review-pkg", api.VersionInfo{
+		Version:     "1.9.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAllow,
+		},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install review-pkg", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for rewritten unpinned Open Score result, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "review-synthetic") || !strings.Contains(result.Reason, "suggesting review-pkg@1.9.0") {
+		t.Fatalf("expected rejected Open Score reason and suggestion to be preserved, got %q", result.Reason)
+	}
+}
+
+func TestEvaluate_UnpinnedOpenScoreAllDenyPreservesRejectedReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+
+	mock.AddVersion("bad-pkg", api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictDeny,
+			Reasons:  []string{"deny-synthetic"},
+			SourceRefs: []string{
+				"ghsa:GHSA-1111-2222-3333",
+			},
+		},
+	})
+
+	eval := NewEvaluator(cfg, mock)
+	result, err := eval.Evaluate(context.Background(), "npm install bad-pkg", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Deny {
+		t.Fatalf("expected Deny for all-deny Open Score result, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "deny-synthetic") {
+		t.Fatalf("expected rejected Open Score deny reason to be preserved, got %q", result.Reason)
+	}
+	if len(result.Packages) != 1 || result.Packages[0].ProviderVerdict == nil {
+		t.Fatalf("expected all-failed package evaluation to preserve rejected provider verdict, got %+v", result.Packages)
+	}
+	if got := result.Packages[0].ProviderVerdict.SourceRefs; len(got) != 1 || got[0] != "ghsa:GHSA-1111-2222-3333" {
+		t.Fatalf("expected all-failed source refs to be preserved for audit output, got %#v", got)
 	}
 }

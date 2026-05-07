@@ -69,6 +69,41 @@ func TestSelect_UnpinnedAllowsLatest(t *testing.T) {
 	}
 }
 
+func TestSelect_UnpinnedUsesOpenScoreVerdictInsteadOfScoreThreshold(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	engine := policy.NewEngine(cfg)
+	riskScore := 5
+
+	mock.AddVersion("open-score-pkg", api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-8760 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 5, Overall: 5},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:  api.ProviderVerdictAllow,
+			RiskScore: &riskScore,
+			Reasons:   []string{"low-risk-synthetic"},
+		},
+	})
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemNPM,
+		Name:      "open-score-pkg",
+		Pinned:    false,
+	}, api.ModeShell)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Errorf("expected Allow from verdict despite low PackageScore, got %s: %s", result.Decision, result.Reason)
+	}
+	if result.Selected.Version != "1.0.0" {
+		t.Errorf("expected 1.0.0, got %s", result.Selected.Version)
+	}
+}
+
 func TestSelect_UnpinnedFallsBackToOlder(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
@@ -102,6 +137,46 @@ func TestSelect_UnpinnedFallsBackToOlder(t *testing.T) {
 	}
 	if !result.WasRewritten {
 		t.Error("expected WasRewritten=true")
+	}
+}
+
+func TestSelect_UnpinnedFallbackPreservesRejectedOpenScoreReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	engine := policy.NewEngine(cfg)
+
+	mock.AddVersion("review-pkg", api.VersionInfo{
+		Version:     "2.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAsk,
+			Reasons:  []string{"review-synthetic"},
+		},
+	})
+	mock.AddVersion("review-pkg", api.VersionInfo{
+		Version:     "1.9.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAllow,
+		},
+	})
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemNPM,
+		Name:      "review-pkg",
+		Pinned:    false,
+	}, api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Selected.Version != "1.9.0" || !result.WasRewritten {
+		t.Fatalf("expected rewritten selection to 1.9.0, got selected=%v rewritten=%v", result.Selected, result.WasRewritten)
+	}
+	if result.RejectedReason == "" {
+		t.Fatal("expected rejected Open Score reason to be preserved")
 	}
 }
 
@@ -203,6 +278,45 @@ func TestSelect_AllDenyFails(t *testing.T) {
 	}
 	if !result.AllFailed {
 		t.Error("all-Deny versions should return AllFailed")
+	}
+}
+
+func TestSelect_AllDenyPreservesOpenScoreReason(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	engine := policy.NewEngine(cfg)
+
+	mock.AddVersion("bad-pkg", api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-720 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:   api.ProviderVerdictDeny,
+			Reasons:    []string{"deny-synthetic"},
+			SourceRefs: []string{"osv:GHSA-1111-2222-3333"},
+		},
+	})
+
+	s := NewSelector(mock, engine, cfg)
+	result, err := s.Select(context.Background(), api.PackageRequest{
+		Ecosystem: api.EcosystemNPM,
+		Name:      "bad-pkg",
+		Pinned:    false,
+	}, api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AllFailed {
+		t.Fatal("expected all-deny result")
+	}
+	if result.RejectedReason == "" {
+		t.Fatal("expected rejected Open Score deny reason")
+	}
+	if result.RejectedVerdict == nil {
+		t.Fatal("expected rejected Open Score verdict")
+	}
+	if got := result.RejectedVerdict.SourceRefs; len(got) != 1 || got[0] != "osv:GHSA-1111-2222-3333" {
+		t.Fatalf("expected rejected Open Score source refs, got %#v", got)
 	}
 }
 
