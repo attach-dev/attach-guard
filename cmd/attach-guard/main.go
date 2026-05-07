@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -67,39 +68,95 @@ func printUsage() {
 Commands:
   evaluate <command>   Evaluate a package manager command against policy
   hook [run]           Read Claude Code hook JSON from stdin and respond
-  run --dry-run <claude|codex> Preview an agent command without executing it
+  run --dry-run <claude|codex> [args...] Preview an agent command without executing it
   config init          Write default config to ~/.attach-guard/config.yaml
   version              Print version
   help                 Show this help`)
 }
 
-// cmdRun handles agent-wrapper commands. The current public surface only
-// supports dry-run validation so it never executes agent binaries.
+const runUsage = "usage: attach-guard run --dry-run <claude|codex> [args...]"
+
+// cmdRun handles agent-wrapper commands.
 func cmdRun(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 2 || args[0] != "--dry-run" {
-		fmt.Fprintln(stderr, "usage: attach-guard run --dry-run <claude|codex>")
+	fs := flag.NewFlagSet("attach-guard run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, runUsage)
+	}
+	dryRun := fs.Bool("dry-run", false, "print the wrapped command without executing it")
+
+	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 
-	agent := args[1]
-	wrappedCommand, ok := dryRunWrappedCommand(agent)
+	positional := fs.Args()
+	if len(positional) < 1 {
+		fmt.Fprintln(stderr, runUsage)
+		return 1
+	}
+
+	if !*dryRun {
+		fmt.Fprintln(stderr, runUsage)
+		return 1
+	}
+
+	agent := positional[0]
+	wrappedCommand, ok := wrappedAgentCommand(agent, positional[1:])
 	if !ok {
 		fmt.Fprintf(stderr, "unsupported agent: %s\n", agent)
-		fmt.Fprintln(stderr, "usage: attach-guard run --dry-run <claude|codex>")
+		fmt.Fprintln(stderr, runUsage)
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "dry-run: would run %s\n", strings.Join(wrappedCommand, " "))
+	fmt.Fprintln(stdout, shellQuoteLine(wrappedCommand))
 	return 0
 }
 
-func dryRunWrappedCommand(agent string) ([]string, bool) {
+func wrappedAgentCommand(agent string, args []string) ([]string, bool) {
 	switch agent {
 	case "claude", "codex":
-		return []string{agent}, true
+		argv := make([]string, 1, 1+len(args))
+		argv[0] = agent
+		argv = append(argv, args...)
+		return argv, true
 	default:
 		return nil, false
 	}
+}
+
+func shellQuoteLine(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		quoted[i] = shellQuoteArg(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func shellQuoteArg(arg string) string {
+	if arg == "" {
+		return "''"
+	}
+	if isShellSafe(arg) {
+		return arg
+	}
+	return "'" + strings.ReplaceAll(arg, "'", "'\\''") + "'"
+}
+
+func isShellSafe(arg string) bool {
+	for _, r := range arg {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') {
+			continue
+		}
+		switch r {
+		case '@', '%', '_', '+', '=', ':', ',', '.', '/', '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // cmdEvaluate evaluates a command string passed as arguments.
