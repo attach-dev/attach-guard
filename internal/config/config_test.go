@@ -18,6 +18,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Policy.MinimumPackageAgeHours != 48 {
 		t.Errorf("expected minimum_package_age_hours=48, got %d", cfg.Policy.MinimumPackageAgeHours)
 	}
+	if cfg.Policy.UnknownBehavior.Local != "ask" || cfg.Policy.UnknownBehavior.CI != "deny" {
+		t.Errorf("expected unknown_behavior local=ask ci=deny, got %+v", cfg.Policy.UnknownBehavior)
+	}
 	if !cfg.PackageManagers.NPM {
 		t.Error("expected npm enabled")
 	}
@@ -41,6 +44,29 @@ func TestWriteAndLoad(t *testing.T) {
 
 	if cfg.Policy.DenyKnownMalware != true {
 		t.Error("expected deny_known_malware=true")
+	}
+}
+
+func TestLoadFromFileMergesUnknownBehaviorAndPreservesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("policy:\n  unknown_behavior:\n    local: allow\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Policy.UnknownBehavior.Local != "allow" {
+		t.Fatalf("expected unknown_behavior.local=allow, got %q", cfg.Policy.UnknownBehavior.Local)
+	}
+	if cfg.Policy.UnknownBehavior.CI != "deny" {
+		t.Fatalf("expected partial config to preserve unknown_behavior.ci default deny, got %q", cfg.Policy.UnknownBehavior.CI)
+	}
+	if cfg.Policy.ProviderUnavailable.Local != "ask" || cfg.Policy.ProviderUnavailable.CI != "deny" {
+		t.Fatalf("expected provider_unavailable defaults preserved, got %+v", cfg.Policy.ProviderUnavailable)
 	}
 }
 
@@ -95,6 +121,10 @@ func TestBundledPluginConfigMatchesDefaults(t *testing.T) {
 	if bundled.Policy.ProviderUnavailable != defaults.Policy.ProviderUnavailable {
 		t.Errorf("provider_unavailable_behavior mismatch:\n  bundled: %+v\n  default: %+v",
 			bundled.Policy.ProviderUnavailable, defaults.Policy.ProviderUnavailable)
+	}
+	if bundled.Policy.UnknownBehavior != defaults.Policy.UnknownBehavior {
+		t.Errorf("unknown_behavior mismatch:\n  bundled: %+v\n  default: %+v",
+			bundled.Policy.UnknownBehavior, defaults.Policy.UnknownBehavior)
 	}
 	if bundled.PackageManagers != defaults.PackageManagers {
 		t.Errorf("package_managers mismatch:\n  bundled: %+v\n  default: %+v",

@@ -38,6 +38,26 @@ type PackageScore struct {
 	Overall     float64 `json:"overall"`
 }
 
+// ProviderVerdictDecision represents a verdict-first provider decision.
+type ProviderVerdictDecision string
+
+const (
+	ProviderVerdictAllow   ProviderVerdictDecision = "ALLOW"
+	ProviderVerdictAsk     ProviderVerdictDecision = "ASK"
+	ProviderVerdictDeny    ProviderVerdictDecision = "DENY"
+	ProviderVerdictUnknown ProviderVerdictDecision = "UNKNOWN"
+)
+
+// ProviderVerdict holds verdict-first provider data such as Attach Open Score.
+// RiskScore is a provider risk score where higher means riskier; policy must
+// not feed it directly into PackageScore's lower-is-worse threshold path.
+type ProviderVerdict struct {
+	Decision   ProviderVerdictDecision `json:"decision"`
+	RiskScore  *int                    `json:"risk_score,omitempty"`
+	Reasons    []string                `json:"reasons,omitempty"`
+	SourceRefs []string                `json:"source_refs,omitempty"`
+}
+
 // PackageAlert represents a known issue or alert for a package version.
 type PackageAlert struct {
 	Severity string `json:"severity"` // critical, high, medium, low
@@ -47,11 +67,12 @@ type PackageAlert struct {
 
 // VersionInfo holds metadata about a specific package version.
 type VersionInfo struct {
-	Version     string         `json:"version"`
-	PublishedAt time.Time      `json:"published_at"`
-	Score       PackageScore   `json:"score"`
-	Alerts      []PackageAlert `json:"alerts"`
-	Deprecated  bool           `json:"deprecated"`
+	Version         string           `json:"version"`
+	PublishedAt     time.Time        `json:"published_at"`
+	Score           PackageScore     `json:"score"`
+	ProviderVerdict *ProviderVerdict `json:"provider_verdict,omitempty"`
+	Alerts          []PackageAlert   `json:"alerts"`
+	Deprecated      bool             `json:"deprecated"`
 }
 
 // AgeHours returns the age of this version in hours.
@@ -64,13 +85,14 @@ func (v *VersionInfo) AgeHours() float64 {
 
 // PackageEvaluation holds the evaluation result for a single package.
 type PackageEvaluation struct {
-	Ecosystem       Ecosystem      `json:"ecosystem"`
-	Name            string         `json:"name"`
-	Requested       string         `json:"requested"`
-	SelectedVersion string         `json:"selected_version"`
-	Score           PackageScore   `json:"score"`
-	AgeHours        float64        `json:"age_hours"`
-	Alerts          []PackageAlert `json:"alerts"`
+	Ecosystem       Ecosystem        `json:"ecosystem"`
+	Name            string           `json:"name"`
+	Requested       string           `json:"requested"`
+	SelectedVersion string           `json:"selected_version"`
+	Score           PackageScore     `json:"score"`
+	ProviderVerdict *ProviderVerdict `json:"provider_verdict,omitempty"`
+	AgeHours        float64          `json:"age_hours"`
+	Alerts          []PackageAlert   `json:"alerts"`
 }
 
 // EvaluationResult holds the full result of evaluating a command.

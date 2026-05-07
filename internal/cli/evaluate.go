@@ -131,15 +131,21 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 
 			if result.AllFailed {
 				eval.SelectedVersion = ""
+				eval.ProviderVerdict = result.RejectedVerdict
 				packages = append(packages, eval)
 				overallDecision = api.Deny
-				reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s", pkg.Name))
+				if result.RejectedReason != "" {
+					reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s: %s", pkg.Name, result.RejectedReason))
+				} else {
+					reasons = append(reasons, fmt.Sprintf("no acceptable version found for %s", pkg.Name))
+				}
 				continue
 			}
 
 			v := result.Selected
 			eval.SelectedVersion = v.Version
 			eval.Score = v.Score
+			eval.ProviderVerdict = v.ProviderVerdict
 			eval.AgeHours = time.Since(v.PublishedAt).Hours()
 			eval.Alerts = v.Alerts
 			packages = append(packages, eval)
@@ -169,9 +175,19 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 				if !canRewriteShape {
 					reasons = append(reasons, fmt.Sprintf("%s: manual review required because the command could not be safely rewritten", pkg.Name))
 				}
+				if result.RejectedReason != "" {
+					reasons = append(reasons, fmt.Sprintf("%s: latest version does not pass policy: %s", pkg.Name, result.RejectedReason))
+				}
+				if result.Decision == api.Ask && result.Reason != "" {
+					reasons = append(reasons, fmt.Sprintf("%s@%s: %s", pkg.Name, v.Version, result.Reason))
+				}
 				reasons = append(reasons, fmt.Sprintf("latest version of %s does not pass policy; suggesting %s@%s", pkg.Name, pkg.Name, v.Version))
 			} else if result.Decision == api.Ask {
-				reasons = append(reasons, fmt.Sprintf("%s: scores are in review range", pkg.Name))
+				reason := result.Reason
+				if reason == "" {
+					reason = "scores are in review range"
+				}
+				reasons = append(reasons, fmt.Sprintf("%s: %s", pkg.Name, reason))
 			}
 		}
 	}

@@ -185,3 +185,152 @@ func TestEngine_CriticalAlert(t *testing.T) {
 		t.Errorf("expected Ask for critical alert, got %s: %s", result.Decision, result.Reason)
 	}
 }
+
+func TestEngine_OpenScoreVerdictAllowBypassesLegacyScoreThresholds(t *testing.T) {
+	cfg := config.DefaultConfig()
+	engine := NewEngine(cfg)
+	riskScore := 5
+
+	input := Input{
+		Name: "low-risk-pkg",
+		Score: api.PackageScore{
+			SupplyChain: 5,
+			Overall:     5,
+		},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:  api.ProviderVerdictAllow,
+			RiskScore: &riskScore,
+			Reasons:   []string{"low-risk-synthetic"},
+		},
+		PublishedAt:       time.Now().Add(-72 * time.Hour),
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Allow {
+		t.Errorf("expected Allow from verdict despite low PackageScore, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEngine_OpenScoreVerdictDenyDoesNotTreatHighRiskAsHighSafety(t *testing.T) {
+	cfg := config.DefaultConfig()
+	engine := NewEngine(cfg)
+	riskScore := 95
+
+	input := Input{
+		Name: "high-risk-pkg",
+		Score: api.PackageScore{
+			SupplyChain: 95,
+			Overall:     95,
+		},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:  api.ProviderVerdictDeny,
+			RiskScore: &riskScore,
+			Reasons:   []string{"high-risk-synthetic"},
+		},
+		PublishedAt:       time.Now().Add(-72 * time.Hour),
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Deny {
+		t.Errorf("expected Deny from high-risk verdict despite high PackageScore, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEngine_OpenScoreVerdictUnknownLocalDefaultAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	engine := NewEngine(cfg)
+
+	input := Input{
+		Name: "unknown-pkg",
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+			Reasons:  []string{"insufficient-evidence-synthetic"},
+		},
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Ask {
+		t.Errorf("expected Ask for UNKNOWN verdict locally, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEngine_OpenScoreVerdictUnknownUsesModeConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.UnknownBehavior.Local = "allow"
+	cfg.Policy.UnknownBehavior.CI = "deny"
+	engine := NewEngine(cfg)
+
+	input := Input{
+		Name: "unknown-pkg",
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+		},
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Allow {
+		t.Errorf("expected configured local Allow for UNKNOWN verdict, got %s: %s", result.Decision, result.Reason)
+	}
+
+	input.Mode = api.ModeCI
+	result = engine.Evaluate(input)
+	if result.Decision != api.Deny {
+		t.Errorf("expected configured CI Deny for UNKNOWN verdict, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEngine_OpenScoreVerdictAskMapsToAsk(t *testing.T) {
+	cfg := config.DefaultConfig()
+	engine := NewEngine(cfg)
+	riskScore := 45
+
+	input := Input{
+		Name: "review-pkg",
+		Score: api.PackageScore{
+			SupplyChain: 95,
+			Overall:     95,
+		},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:  api.ProviderVerdictAsk,
+			RiskScore: &riskScore,
+			Reasons:   []string{"review-synthetic"},
+		},
+		PublishedAt:       time.Now().Add(-72 * time.Hour),
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Ask {
+		t.Errorf("expected Ask from ASK verdict, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
+func TestEngine_OpenScoreVerdictUnknownConfiguredAllowStillAsksOnCriticalAlert(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.UnknownBehavior.Local = "allow"
+	engine := NewEngine(cfg)
+
+	input := Input{
+		Name: "unknown-vuln-pkg",
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+		},
+		Alerts:            []api.PackageAlert{{Severity: "critical", Title: "critical evidence", Category: "vulnerability"}},
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Ask {
+		t.Errorf("expected Ask for UNKNOWN configured allow with critical alert, got %s: %s", result.Decision, result.Reason)
+	}
+}

@@ -14,17 +14,17 @@ import (
 
 // Entry represents a single audit log entry.
 type Entry struct {
-	Timestamp       string                `json:"timestamp"`
-	User            string                `json:"user"`
-	Cwd             string                `json:"cwd"`
-	PackageManager  string                `json:"package_manager"`
-	OriginalCommand string                `json:"original_command"`
-	RewrittenCommand string               `json:"rewritten_command,omitempty"`
-	Decision        api.Decision          `json:"decision"`
-	Reason          string                `json:"reason"`
-	Packages        []api.PackageEvaluation `json:"packages"`
-	Provider        string                `json:"provider"`
-	Mode            string                `json:"mode"`
+	Timestamp        string                  `json:"timestamp"`
+	User             string                  `json:"user"`
+	Cwd              string                  `json:"cwd"`
+	PackageManager   string                  `json:"package_manager"`
+	OriginalCommand  string                  `json:"original_command"`
+	RewrittenCommand string                  `json:"rewritten_command,omitempty"`
+	Decision         api.Decision            `json:"decision"`
+	Reason           string                  `json:"reason"`
+	Packages         []api.PackageEvaluation `json:"packages"`
+	Provider         string                  `json:"provider"`
+	Mode             string                  `json:"mode"`
 }
 
 // Logger writes audit entries to a JSONL file.

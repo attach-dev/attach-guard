@@ -292,6 +292,9 @@ policy:
   provider_unavailable_behavior:
     local: ask                     # ask | deny | allow
     ci: deny
+  unknown_behavior:
+    local: ask                     # Open Score UNKNOWN: ask | deny | allow
+    ci: deny
   auto_rewrite_unpinned:
     local: false                   # auto-pin to safe version?
     ci: false
@@ -330,10 +333,11 @@ Highest priority wins (later sources override earlier):
 2. Check provider availability
 3. Deny known malware
 4. Deny versions under minimum age (48 hours default)
-5. Deny scores below hard threshold (supply chain < 50)
-6. Ask on gray-band scores (50-70)
-7. Ask on critical/high alerts
-8. Allow everything else
+5. Use Attach Open Score-style provider verdicts when present (`ALLOW`, `ASK`, `DENY`, `UNKNOWN`)
+6. Deny scores below hard threshold (supply chain < 50) for legacy score providers
+7. Ask on gray-band scores (50-70)
+8. Ask on critical/high alerts
+9. Allow everything else
 
 ### Unpinned version handling
 
@@ -365,7 +369,7 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
   "original_command": "npm install example-malware@1.0.0",
   "decision": "deny",
   "reason": "example-malware@1.0.0: known malware alert",
-  "packages": [{"ecosystem":"npm","name":"example-malware","selected_version":"1.0.0","score":{"supply_chain":0,"overall":0},"alerts":[{"severity":"critical","title":"known malware","category":"malware"}]}],
+  "packages": [{"ecosystem":"npm","name":"example-malware","selected_version":"1.0.0","score":{"supply_chain":0,"overall":0},"provider_verdict":{"decision":"DENY","risk_score":95,"reasons":["known-malware-synthetic"],"source_refs":["osv:GHSA-0000-0000-0000"]},"alerts":[{"severity":"critical","title":"known malware","category":"malware"}]}],
   "provider": "mock",
   "mode": "claude"
 }
