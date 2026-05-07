@@ -9,6 +9,8 @@ attach-guard should treat Attach Open Score as the first-party default scoring d
 
 This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer; the networked Open Score provider/client remains future work.
 
+For local dogfooding of the current verdict-semantics path, see [Local Attach Open Score dogfood guide](LOCAL_OPEN_SCORE_DOGFOOD.md).
+
 ## Source and licensing posture
 
 Allowed default Attach Open Score inputs are public, open, or otherwise terms-permitted sources with attribution and source references, including OSV, GitHub Advisory Database, deps.dev, OpenSSF Scorecard, public registry metadata, and package artifacts where allowed by each source's license/terms.
@@ -155,7 +157,7 @@ Open Score provider/client remains a later implementation pass.
 - [x] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
 - [x] Add fixture-driven tests using public-safe synthetic verdicts.
 - [x] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.
-- [ ] Test provider-unavailable behavior via `policy.provider_unavailable_behavior`.
+- [x] Test provider-unavailable behavior via `policy.provider_unavailable_behavior`.
 - [x] Test score polarity so high-risk scores cannot accidentally become high-safety scores.
 - [ ] Preserve source/legal attribution in docs and audit output.
 - [ ] Keep Socket as explicit BYO-token/local provider.
