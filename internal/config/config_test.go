@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,6 +68,87 @@ func TestLoadFromFileMergesUnknownBehaviorAndPreservesDefaults(t *testing.T) {
 	}
 	if cfg.Policy.ProviderUnavailable.Local != "ask" || cfg.Policy.ProviderUnavailable.CI != "deny" {
 		t.Fatalf("expected provider_unavailable defaults preserved, got %+v", cfg.Policy.ProviderUnavailable)
+	}
+}
+
+func TestLoadFromFileOpenScoreProviderConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	data := []byte("provider:\n  kind: open-score\n  endpoint: http://127.0.0.1:8757/v0/verdict\n  timeout_seconds: 3\n")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if cfg.Provider.Kind != "open-score" {
+		t.Fatalf("expected provider kind open-score, got %q", cfg.Provider.Kind)
+	}
+	if cfg.Provider.Endpoint != "http://127.0.0.1:8757/v0/verdict" {
+		t.Fatalf("expected endpoint to load, got %q", cfg.Provider.Endpoint)
+	}
+	if cfg.Provider.TimeoutSeconds == nil || *cfg.Provider.TimeoutSeconds != 3 {
+		t.Fatalf("expected timeout_seconds=3, got %v", cfg.Provider.TimeoutSeconds)
+	}
+}
+
+func TestLoadFromFileOpenScoreValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name:    "missing endpoint",
+			config:  "provider:\n  kind: open-score\n",
+			wantErr: "provider.endpoint is required",
+		},
+		{
+			name:    "malformed endpoint",
+			config:  "provider:\n  kind: open-score\n  endpoint: http://[::1\n",
+			wantErr: "provider.endpoint must be a valid URL",
+		},
+		{
+			name:    "non http scheme",
+			config:  "provider:\n  kind: open-score\n  endpoint: file:///tmp/verdict\n",
+			wantErr: "provider.endpoint must use http or https",
+		},
+		{
+			name:    "missing host",
+			config:  "provider:\n  kind: open-score\n  endpoint: http:///verdict\n",
+			wantErr: "provider.endpoint must include a host",
+		},
+		{
+			name:    "zero timeout",
+			config:  "provider:\n  kind: open-score\n  endpoint: http://127.0.0.1:8757/v0/verdict\n  timeout_seconds: 0\n",
+			wantErr: "provider.timeout_seconds must be positive",
+		},
+		{
+			name:    "negative timeout",
+			config:  "provider:\n  kind: open-score\n  endpoint: http://127.0.0.1:8757/v0/verdict\n  timeout_seconds: -1\n",
+			wantErr: "provider.timeout_seconds must be positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if err := os.WriteFile(path, []byte(tt.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := LoadFromFile(path)
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
 	}
 }
 

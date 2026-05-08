@@ -21,7 +21,7 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 - Rewrites unpinned installs to safe pinned versions when possible
 - Logs every decision to a local JSONL audit trail
 
-Attach Open Score is the first-party provider direction and is not wired in yet; see [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) for the planned integration contract, [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe local verification, and [the dogfood plan](docs/plans/2026-05-07-local-open-score-dogfood.md) for scope.
+Attach Open Score is the first-party provider direction. An opt-in `open-score` HTTP provider is available for configured Attach Open Score-compatible verdict endpoints; Socket remains the default local BYO-token provider. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) and [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe verification.
 
 ## Smart Version Replacement: Block Without Breaking Flow
 
@@ -89,7 +89,7 @@ Security enforcement requires interception at the tool-call boundary, before exe
 
 ### Quick Start: Claude Code Plugin
 
-The fastest way to try the current packaged plugin. Today's released plugin uses the local bring-your-own-token Socket.dev provider for real scoring. Attach Open Score is the first-party direction and is not wired in yet; Socket must not be treated as hosted/default Attach scoring.
+The fastest way to try the current packaged plugin. Today's default plugin path uses the local bring-your-own-token Socket.dev provider for real scoring. Attach Open Score is the first-party direction and can be configured explicitly via the opt-in `open-score` HTTP provider; Socket must not be treated as hosted/default Attach scoring.
 
 ```bash
 # Add the marketplace and install (one-time)
@@ -284,7 +284,7 @@ attach-guard run --dry-run codex --sandbox read-only "Review this diff"
 
 Default config location: `~/.attach-guard/config.yaml`
 
-Current provider configuration still defaults to the Socket adapter in code. Treat this as a legacy/local BYO-token default until the Attach Open Score provider lands; do not use Socket as hosted/default Attach scoring.
+Current provider configuration still defaults to the Socket adapter in code. Treat this as a legacy/local BYO-token default; use `open-score` explicitly when pointing attach-guard at an Attach Open Score-compatible verdict endpoint. Do not use Socket as hosted/default Attach scoring.
 
 ```yaml
 provider:
@@ -316,6 +316,17 @@ package_managers:
 logging:
   path: "~/.attach-guard/audit.jsonl"
 ```
+
+Opt in to an Attach Open Score-compatible HTTP verdict endpoint explicitly:
+
+```yaml
+provider:
+  kind: open-score
+  endpoint: http://127.0.0.1:8757/v0/verdict
+  timeout_seconds: 5
+```
+
+The `open-score` provider posts only public package coordinates (`ecosystem`, `name`, `version`) and consumes verdict fields (`decision`, optional `score`, `reasons`, `source_refs`). Provider failures and malformed responses map to `UNKNOWN`/provider-unavailable behavior, never `ALLOW`.
 
 ### Environment variable overrides
 
@@ -413,7 +424,7 @@ Quota resets hourly. For higher limits, see [Socket.dev pricing](https://socket.
 
 - Direct `pip` / `pip3` (including `uv pip`), `go get` / `go install`, and `cargo add` / `cargo install` are supported; `python -m pip` remains passthrough for now
 - pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
-- Current released provider implementation is Socket BYO-token/local; Attach Open Score first-party provider integration is the next direction
+- Current default provider implementation is Socket BYO-token/local; Attach Open Score first-party provider integration is available by explicit `open-score` configuration
 - PyPI, Go, and Cargo scoring through the Socket BYO provider uses Socket's `POST /v0/purl` endpoint, which has higher quota cost (100 units) compared to npm (10 units)
 - No transitive dependency analysis
 - No lockfile graph support

@@ -14,6 +14,7 @@ import (
 	"github.com/attach-dev/attach-guard/internal/envdetect"
 	"github.com/attach-dev/attach-guard/internal/hook/claude"
 	"github.com/attach-dev/attach-guard/internal/provider"
+	openscoreprov "github.com/attach-dev/attach-guard/internal/provider/openscore"
 	socketprov "github.com/attach-dev/attach-guard/internal/provider/socket"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
@@ -297,24 +298,35 @@ func loadConfigAndProvider(exitCode int) (*config.Config, provider.Provider) {
 		os.Exit(exitCode)
 	}
 
-	var prov provider.Provider
+	prov, err := newProviderFromConfig(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error configuring provider: %v\n", err)
+		os.Exit(exitCode)
+	}
+
+	return cfg, prov
+}
+
+func newProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
 	switch cfg.Provider.Kind {
 	case "socket":
 		p, err := socketprov.New(cfg.Provider.APITokenEnv)
 		if err != nil {
 			// Provider not configured — use a fallback that reports unavailable
-			prov = &unavailableProvider{name: "socket"}
-		} else {
-			prov = p
+			return &unavailableProvider{name: "socket"}, nil
 		}
+		return p, nil
+	case "open-score":
+		timeoutSeconds := 0
+		if cfg.Provider.TimeoutSeconds != nil {
+			timeoutSeconds = *cfg.Provider.TimeoutSeconds
+		}
+		return openscoreprov.New(cfg.Provider.Endpoint, timeoutSeconds)
 	case "mock":
-		prov = provider.NewMockProvider()
+		return provider.NewMockProvider(), nil
 	default:
-		fmt.Fprintf(os.Stderr, "unknown provider: %s\n", cfg.Provider.Kind)
-		os.Exit(exitCode)
+		return nil, fmt.Errorf("unknown provider: %s", cfg.Provider.Kind)
 	}
-
-	return cfg, prov
 }
 
 // unavailableProvider is a provider that always reports unavailable.

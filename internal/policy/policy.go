@@ -158,6 +158,10 @@ func (e *Engine) evaluateProviderVerdict(input Input) Output {
 }
 
 func (e *Engine) handleUnknownVerdict(input Input, verdict *api.ProviderVerdict) Output {
+	if verdictHasReason(verdict, "provider-unavailable") {
+		return e.handleProviderUnavailable(input.Mode)
+	}
+
 	behavior := e.cfg.Policy.UnknownBehavior.Local
 	if input.Mode == api.ModeCI {
 		behavior = e.cfg.Policy.UnknownBehavior.CI
@@ -176,6 +180,18 @@ func (e *Engine) handleUnknownVerdict(input Input, verdict *api.ProviderVerdict)
 		}
 	}
 	return output
+}
+
+func verdictHasReason(verdict *api.ProviderVerdict, reason string) bool {
+	if verdict == nil {
+		return false
+	}
+	for _, r := range verdict.Reasons {
+		if strings.EqualFold(strings.TrimSpace(r), reason) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProviderUnavailableDecision returns the decision for when the provider is unavailable.

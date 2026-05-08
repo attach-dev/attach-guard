@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,8 +21,10 @@ type Config struct {
 
 // ProviderConfig configures the risk provider.
 type ProviderConfig struct {
-	Kind        string `yaml:"kind"`
-	APITokenEnv string `yaml:"api_token_env"`
+	Kind           string `yaml:"kind"`
+	APITokenEnv    string `yaml:"api_token_env"`
+	Endpoint       string `yaml:"endpoint,omitempty"`
+	TimeoutSeconds *int   `yaml:"timeout_seconds,omitempty"`
 }
 
 // PolicyConfig holds policy thresholds and behavior.
@@ -141,6 +144,10 @@ func Load() (*Config, error) {
 	// Environment variable overrides
 	applyEnvOverrides(cfg)
 
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -151,7 +158,42 @@ func LoadFromFile(path string) (*Config, error) {
 		return nil, err
 	}
 	applyEnvOverrides(cfg)
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// Validate checks configuration values that need cross-field validation.
+func (c *Config) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Provider.Kind != "open-score" {
+		return nil
+	}
+
+	endpoint := strings.TrimSpace(c.Provider.Endpoint)
+	if endpoint == "" {
+		return fmt.Errorf("provider.endpoint is required when provider.kind is open-score")
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("provider.endpoint must be a valid URL when provider.kind is open-score: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("provider.endpoint must use http or https when provider.kind is open-score")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("provider.endpoint must include a host when provider.kind is open-score")
+	}
+
+	if c.Provider.TimeoutSeconds != nil && *c.Provider.TimeoutSeconds <= 0 {
+		return fmt.Errorf("provider.timeout_seconds must be positive when provider.kind is open-score")
+	}
+
+	return nil
 }
 
 // ResolveLogPath expands ~ in the log path.

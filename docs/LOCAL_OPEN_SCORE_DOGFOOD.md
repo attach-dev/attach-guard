@@ -3,13 +3,14 @@
 Status: local-only dogfood guide for current attach-guard code
 Audience: attach-guard maintainers and contributors
 
-This guide shows how to exercise the current CLI/provider/policy path with Attach Open Score verdict semantics without implying that a hosted Attach Open Score service or networked `open-score` provider has shipped.
+This guide shows how to exercise the current CLI/provider/policy path with Attach Open Score verdict semantics and the opt-in `open-score` HTTP provider without implying that a hosted/default Attach Open Score service has shipped.
 
 ## Current state
 
 What exists today:
 
 - attach-guard has a verdict-first provider payload, `ProviderVerdict`, with public decisions `ALLOW`, `ASK`, `DENY`, and `UNKNOWN`.
+- attach-guard has an opt-in `open-score` HTTP provider for configured Attach Open Score-compatible verdict endpoints.
 - Policy and version selection consume that verdict payload before falling back to legacy safety-score thresholds.
 - Audit/evaluation output preserves `provider_verdict` fields when a provider returns them.
 - Local defaults are intentionally developer-friendly: provider unavailable and Open Score `UNKNOWN` map to ask/warn by default.
@@ -17,11 +18,11 @@ What exists today:
 What does **not** exist yet:
 
 - No public hosted Attach Open Score behavior is documented or promised here.
-- No networked `open-score` provider kind is wired into the CLI yet.
+- No hosted/default `open-score` endpoint is baked into attach-guard; the endpoint must be explicitly configured.
 - The CLI `mock` provider is an empty local provider unless test code seeds fixtures; it is useful for tests, not for ad-hoc scoring demos.
 - Socket.dev remains an explicit bring-your-own-token local provider only. Do not present Socket data, Socket scores, or Socket quota behavior as Attach Open Score.
 
-For the planned provider contract, see [Attach Open Score provider semantics](OPEN_SCORE_PROVIDER.md).
+For the provider contract, see [Attach Open Score provider semantics](OPEN_SCORE_PROVIDER.md).
 
 ## Prerequisites
 
@@ -126,8 +127,9 @@ The default local posture is ask/warn. If you need an explicit dogfood config, k
 
 ```yaml
 provider:
-  kind: socket              # current local BYO-token provider; open-score is not wired yet
-  api_token_env: SOCKET_API_TOKEN
+  kind: open-score
+  endpoint: http://127.0.0.1:8757/v0/verdict
+  timeout_seconds: 5
 policy:
   provider_unavailable_behavior:
     local: ask
@@ -137,7 +139,7 @@ policy:
     ci: deny
 ```
 
-Future `open-score` examples should remain clearly marked as planned until the provider kind is implemented.
+Use a local or test Attach Open Score-compatible endpoint for dogfood. Do not point public examples at private endpoints, and do not imply there is a hosted/default Attach Open Score service until that ships.
 
 ## Public-safety checklist for docs and demos
 

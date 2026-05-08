@@ -287,6 +287,28 @@ func TestEngine_OpenScoreVerdictUnknownUsesModeConfig(t *testing.T) {
 	}
 }
 
+func TestEngine_OpenScoreProviderUnavailableReasonUsesProviderUnavailablePolicy(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Policy.UnknownBehavior.Local = "allow"
+	cfg.Policy.ProviderUnavailable.Local = "deny"
+	engine := NewEngine(cfg)
+
+	input := Input{
+		Name: "outage-pkg",
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictUnknown,
+			Reasons:  []string{"provider-unavailable"},
+		},
+		ProviderAvailable: true,
+		Mode:              api.ModeShell,
+	}
+
+	result := engine.Evaluate(input)
+	if result.Decision != api.Deny {
+		t.Errorf("expected provider-unavailable policy to override UNKNOWN allow, got %s: %s", result.Decision, result.Reason)
+	}
+}
+
 func TestEngine_OpenScoreVerdictAskMapsToAsk(t *testing.T) {
 	cfg := config.DefaultConfig()
 	engine := NewEngine(cfg)
