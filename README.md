@@ -245,7 +245,7 @@ When Claude Code calls the Bash tool with a package install command (e.g., `npm 
 ```
 attach-guard evaluate <command>    Evaluate a package manager command against policy
 attach-guard hook [run]            Read Claude Code hook JSON from stdin and respond
-attach-guard run --dry-run <claude|codex> Preview a claude/codex command without executing it
+attach-guard run --dry-run <claude|codex> [args...] Preview a claude/codex command without executing it
 attach-guard config init           Write default config to ~/.attach-guard/config.yaml
 attach-guard version               Print version
 attach-guard help                  Show help
@@ -276,6 +276,8 @@ attach-guard hook
 # Preview supported agent commands without starting the agent
 attach-guard run --dry-run claude
 attach-guard run --dry-run codex
+attach-guard run --dry-run claude --model sonnet
+attach-guard run --dry-run codex --sandbox read-only "Review this diff"
 ```
 
 ## Configuration
