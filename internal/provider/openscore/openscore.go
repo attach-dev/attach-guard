@@ -39,10 +39,32 @@ type verdictRequest struct {
 }
 
 type verdictResponse struct {
-	Decision   string   `json:"decision"`
-	Score      *int     `json:"score,omitempty"`
-	Reasons    []string `json:"reasons,omitempty"`
-	SourceRefs []string `json:"source_refs,omitempty"`
+	Decision   string        `json:"decision"`
+	Score      *int          `json:"score,omitempty"`
+	Reasons    reasonList    `json:"reasons,omitempty"`
+	SourceRefs sourceRefList `json:"source_refs,omitempty"`
+}
+
+type reasonList []string
+
+func (l *reasonList) UnmarshalJSON(data []byte) error {
+	values, err := decodeStringOrObjectList(data, "code")
+	if err != nil {
+		return err
+	}
+	*l = values
+	return nil
+}
+
+type sourceRefList []string
+
+func (l *sourceRefList) UnmarshalJSON(data []byte) error {
+	values, err := decodeStringOrObjectList(data, "id", "url")
+	if err != nil {
+		return err
+	}
+	*l = values
+	return nil
 }
 
 // New creates an Attach Open Score HTTP provider. A timeoutSeconds value of 0
@@ -131,8 +153,8 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 			ProviderVerdict: &api.ProviderVerdict{
 				Decision:   decision,
 				RiskScore:  response.Score,
-				Reasons:    response.Reasons,
-				SourceRefs: response.SourceRefs,
+				Reasons:    []string(response.Reasons),
+				SourceRefs: []string(response.SourceRefs),
 			},
 		}, nil
 	default:
@@ -176,6 +198,54 @@ func readResponseBody(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("response body exceeds %d bytes", maxResponseBodyBytes)
 	}
 	return body, nil
+}
+
+func decodeStringOrObjectList(data []byte, objectKeys ...string) ([]string, error) {
+	if strings.TrimSpace(string(data)) == "null" {
+		return nil, nil
+	}
+
+	var items []json.RawMessage
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, err
+	}
+
+	values := make([]string, 0, len(items))
+	for i, item := range items {
+		var value string
+		if err := json.Unmarshal(item, &value); err == nil {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				values = append(values, value)
+			}
+			continue
+		}
+
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(item, &fields); err != nil {
+			return nil, fmt.Errorf("entry %d must be a string or object: %w", i, err)
+		}
+
+		projected := ""
+		for _, key := range objectKeys {
+			raw, ok := fields[key]
+			if !ok {
+				continue
+			}
+			if err := json.Unmarshal(raw, &projected); err != nil {
+				return nil, fmt.Errorf("entry %d field %q must be a string: %w", i, key, err)
+			}
+			projected = strings.TrimSpace(projected)
+			if projected != "" {
+				break
+			}
+		}
+		if projected == "" {
+			return nil, fmt.Errorf("entry %d must include one of: %s", i, strings.Join(objectKeys, ", "))
+		}
+		values = append(values, projected)
+	}
+	return values, nil
 }
 
 func unavailableVersion(version string) *api.VersionInfo {

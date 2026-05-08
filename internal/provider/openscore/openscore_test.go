@@ -110,6 +110,71 @@ func TestGetPackageScoreSendsMinimalPayloadAndPreservesVerdict(t *testing.T) {
 	}
 }
 
+func TestGetPackageScoreAcceptsAttachOpenScoreV0VerdictShape(t *testing.T) {
+	prov := newMockProvider(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{
+			"schema_version": "attach-open-score/v0",
+			"package": {
+				"ecosystem": "pypi",
+				"name": "synthetic-vulnerable-package",
+				"version": "2.0.0",
+				"purl": "pkg:pypi/synthetic-vulnerable-package@2.0.0",
+				"resolved": true
+			},
+			"decision": "DENY",
+			"score": 96,
+			"confidence": "HIGH",
+			"reasons": [
+				{
+					"code": "KNOWN_VULNERABILITY_CRITICAL",
+					"severity": "CRITICAL",
+					"decision_effect": "DENY",
+					"message": "Synthetic fixture.",
+					"source_ref_ids": ["synthetic-ghsa-critical"]
+				}
+			],
+			"source_refs": [
+				{
+					"id": "synthetic-ghsa-critical",
+					"source": "synthetic-github-advisory-database",
+					"source_id": "GHSA-synth-crit-0001",
+					"url": "https://example.invalid/advisories/GHSA-synth-crit-0001",
+					"retrieved_at": "2026-05-05T00:00:00Z",
+					"ttl_seconds": 86400,
+					"license_or_terms_url": "https://example.invalid/terms",
+					"attribution": "Synthetic fixture.",
+					"attribution_required": false,
+					"redistribution": "allowed",
+					"public_display": "allowed"
+				}
+			],
+			"evaluated_at": "2026-05-05T00:00:00Z",
+			"ttl_seconds": 86400,
+			"limitations": ["Synthetic fixture."]
+		}`), nil
+	})
+
+	info, err := prov.GetPackageScore(context.Background(), api.EcosystemPyPI, "synthetic-vulnerable-package", "2.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ProviderVerdict == nil {
+		t.Fatal("expected provider verdict")
+	}
+	if info.ProviderVerdict.Decision != api.ProviderVerdictDeny {
+		t.Fatalf("expected DENY verdict, got %s", info.ProviderVerdict.Decision)
+	}
+	if info.ProviderVerdict.RiskScore == nil || *info.ProviderVerdict.RiskScore != 96 {
+		t.Fatalf("expected risk score 96, got %v", info.ProviderVerdict.RiskScore)
+	}
+	if got := strings.Join(info.ProviderVerdict.Reasons, ","); got != "KNOWN_VULNERABILITY_CRITICAL" {
+		t.Fatalf("expected reason code preserved, got %q", got)
+	}
+	if got := strings.Join(info.ProviderVerdict.SourceRefs, ","); got != "synthetic-ghsa-critical" {
+		t.Fatalf("expected source ref ID preserved, got %q", got)
+	}
+}
+
 func TestGetPackageScoreAcceptsUppercaseDecisions(t *testing.T) {
 	for _, decision := range []api.ProviderVerdictDecision{
 		api.ProviderVerdictAllow,
