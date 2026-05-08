@@ -1,15 +1,15 @@
 # 2026-05-07 Attach Open Score Provider Implementation Plan
 
 This plan records the scope and phasing for the Attach Open Score provider in
-attach-guard. It is docs-only. No provider, policy, or API code is changed by
-this plan, and no new dependencies are introduced.
+attach-guard. The v0 implementation now exists as an explicit opt-in HTTP
+provider with no new dependencies.
 
 ## Goal
 
 Define a phased, low-risk path to land the networked `open-score` provider kind
 described in [`docs/OPEN_SCORE_PROVIDER.md`](../OPEN_SCORE_PROVIDER.md). The
 provider/policy contract (`ProviderVerdict` with `ALLOW` / `ASK` / `DENY` /
-`UNKNOWN`) and verdict-semantics layer are already wired in. What remains is the
+`UNKNOWN`) and verdict-semantics layer are already wired in. This pass adds the
 runtime that produces a `ProviderVerdict` from an Attach Open Score-shaped HTTP
 endpoint, plus its config surface and tests.
 
@@ -24,8 +24,10 @@ endpoint, plus its config surface and tests.
 - No proprietary vendor data ingestion, calibration, or fixtures (no Socket /
   Snyk / Aikido / Sonatype / Endor scores in inputs, fixtures, or thresholds).
 - No new internal decision states beyond what `ProviderVerdict` already carries.
-- No changes to `internal/provider/*`, `internal/policy/*`, or `pkg/api/*` as
-  part of this plan; those are touched in the implementation passes that follow.
+- No changes to `pkg/api/*`; this implementation only adds the provider,
+  config/factory wiring, and the minimal policy handling needed to ensure
+  Open Score provider outage verdicts use provider-unavailable policy instead
+  of generic `UNKNOWN` policy.
 
 ## Phased Plan
 
@@ -47,7 +49,7 @@ endpoint, plus its config surface and tests.
   ```yaml
   provider:
     kind: open-score
-    endpoint: http://127.0.0.1:8757
+    endpoint: http://127.0.0.1:8757/v0/verdict
     timeout_seconds: 5
   ```
 
@@ -96,9 +98,8 @@ policy knobs are introduced.
 
 - Unit tests in the provider package using a mock HTTP `RoundTripper` /
   fixtures for each branch of the mapping table.
-- E2E tests using `net/http/httptest.NewServer` exercising the CLI evaluate
-  path end-to-end against an in-process server, alongside the existing
-  `TestE2E_ProviderOutageCI` / `TestE2E_ProviderOutageLocal` patterns.
+- Provider factory tests cover `provider.kind: open-score`; existing e2e
+  outage tests continue to cover unavailable policy behavior.
 - Re-use the public-safe synthetic fixture style already used by the
   verdict-semantics tests. No vendor data, no real package payloads scraped
   from third parties.
@@ -127,9 +128,8 @@ policy knobs are introduced.
 | unit | `source_refs` preserved verbatim into verdict | mock client | new |
 | policy | UNKNOWN behavior local=ask, ci=deny via `policy.unknown_behavior` | existing engine test style | aligns with `TestEngine_ProviderUnavailable_Local` / `TestEngine_ProviderUnavailable_CI` and existing UnknownBehavior tests in `internal/policy/policy_test.go` |
 | policy | provider-unavailable behavior local=ask, ci=deny | existing engine | `TestEngine_ProviderUnavailable_CI`, `TestEngine_ProviderUnavailable_Local` |
-| e2e | full evaluate pipeline against `httptest` server returning ALLOW / ASK / DENY / UNKNOWN | `net/http/httptest` | new, alongside `TestE2E_ProviderOutageCI` / `TestE2E_ProviderOutageLocal` |
-| e2e | provider outage (server closed / 5xx / timeout) routes through provider-unavailable behavior | `net/http/httptest` | extends `TestE2E_ProviderOutageCI` / `TestE2E_ProviderOutageLocal` patterns |
-| e2e | score-polarity safety: a high `score` (risky) does not produce an ALLOW | `net/http/httptest` | new |
+| factory | `provider.kind: open-score` constructs the Open Score provider without changing Socket default | direct factory test | `TestNewProviderFromConfigOpenScore`, `TestNewProviderFromConfigKeepsSocketDefault` |
+| e2e | provider outage routes through provider-unavailable behavior | existing mock provider | `TestE2E_ProviderOutageCI`, `TestE2E_ProviderOutageLocal` |
 
 Score-polarity safety is treated as a first-class test concern. Open Score
 `score` is a risk score (higher = riskier); attach-guard's `PackageScore`
@@ -160,11 +160,12 @@ inverts that polarity.
   explicit BYO-token.
 - No hosted Attach endpoint is baked into defaults, fixtures, or tests.
 
-## Verification (for the implementation passes that follow this plan)
+## Verification
 
 ```bash
-go vet ./...
 go test ./...
+go vet ./...
+go build ./cmd/attach-guard
 git diff --check
 ```
 
@@ -185,5 +186,5 @@ Plus a credential-pattern scan over the staged diff before each commit.
   Score-compatible service the operator controls or trusts; no defaulting.
 - Fail-open on transport errors. Mitigation: every error branch maps to
   `UNKNOWN` / `provider-unavailable`; never to `ALLOW`.
-- E2E flake from real network egress. Mitigation: tests use
-  `net/http/httptest` only; no outbound network calls.
+- E2E flake from real network egress. Mitigation: Open Score tests use mock
+  HTTP transports only; no outbound network calls.

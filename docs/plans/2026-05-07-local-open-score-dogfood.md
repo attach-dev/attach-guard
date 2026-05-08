@@ -4,7 +4,7 @@ This plan records the scope for the local Open Score dogfood guide.
 
 ## Goal
 
-Document a public-safe local dogfood path for attach-guard's current Attach Open Score verdict-semantics layer without claiming a hosted or networked Open Score provider has shipped.
+Document a public-safe local dogfood path for attach-guard's Attach Open Score verdict-semantics layer without claiming a hosted/default Open Score service has shipped.
 
 ## Scope
 
@@ -19,7 +19,7 @@ No service code, provider code, dependencies, lockfiles, credentials, private da
 ## Current-State Decisions
 
 - The current code has a verdict-first `ProviderVerdict` path with `ALLOW`, `ASK`, `DENY`, and `UNKNOWN` semantics.
-- The networked `open-score` provider kind is future work and must not be described as shipped.
+- The networked `open-score` provider kind is now opt-in and must not be described as hosted/default Attach scoring.
 - Local default behavior for `UNKNOWN` and provider-unavailable cases remains ask/warn, not fail-closed.
 - CI/team strictness requires explicit configuration.
 - Socket remains an explicit BYO-token local provider and is not hosted/default Attach scoring.

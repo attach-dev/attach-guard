@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/attach-dev/attach-guard/internal/config"
 )
 
 func TestCmdRunDryRunClaudePrintsExpectedWrappedArgv(t *testing.T) {
@@ -106,6 +108,34 @@ func TestCmdRunUsageErrors(t *testing.T) {
 				t.Fatalf("expected usage, got %q", stderr.String())
 			}
 		})
+	}
+}
+
+func TestNewProviderFromConfigKeepsSocketDefault(t *testing.T) {
+	t.Setenv("SOCKET_API_TOKEN", "")
+
+	prov, err := newProviderFromConfig(config.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prov.Name() != "socket" {
+		t.Fatalf("expected default provider socket, got %q", prov.Name())
+	}
+}
+
+func TestNewProviderFromConfigOpenScore(t *testing.T) {
+	timeoutSeconds := 1
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	cfg.Provider.Endpoint = "http://127.0.0.1:8757/v0/verdict"
+	cfg.Provider.TimeoutSeconds = &timeoutSeconds
+
+	prov, err := newProviderFromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prov.Name() != "open-score" {
+		t.Fatalf("expected open-score provider, got %q", prov.Name())
 	}
 }
 

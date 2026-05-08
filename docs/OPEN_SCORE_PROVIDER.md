@@ -1,13 +1,13 @@
 # Attach Open Score provider semantics
 
-Status: design note for the attach-guard integration path
+Status: design note and v0 provider integration reference
 Audience: attach-guard maintainers, Attach Open Score implementers, policy authors
 
 ## Goal
 
 attach-guard should treat Attach Open Score as the first-party default scoring direction while keeping proprietary providers, including Socket, as bring-your-own-token local integrations unless an explicit partnership permits broader hosted/default use.
 
-This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer; the networked Open Score provider/client remains future work.
+This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer and an opt-in `open-score` HTTP provider. Socket remains the default provider.
 
 For local dogfooding of the current verdict-semantics path, see [Local Attach Open Score dogfood guide](LOCAL_OPEN_SCORE_DOGFOOD.md).
 
@@ -110,7 +110,7 @@ UNKNOWN verdict      → DENY or policy failure
 
 ## Config direction
 
-Current config supports a single provider kind and an environment override:
+Current config supports a single provider kind and an environment override. The default remains Socket:
 
 ```yaml
 provider:
@@ -121,12 +121,12 @@ provider:
 ATTACH_GUARD_PROVIDER=mock
 ```
 
-Future provider kind for this integration should be `open-score`.
+The opt-in provider kind for this integration is `open-score`. `endpoint` is the Attach Open Score-compatible HTTP verdict URL; no hosted endpoint is baked into defaults.
 
 ```yaml
 provider:
   kind: open-score
-  endpoint: http://127.0.0.1:8757      # local or hosted Attach Open Score-compatible HTTP endpoint
+  endpoint: http://127.0.0.1:8757/v0/verdict
   timeout_seconds: 5
 policy:
   unknown_behavior:
@@ -137,7 +137,7 @@ policy:
     ci: deny
 ```
 
-The v0 implementation target is an HTTP client provider. Embedded Go package or external CLI modes can be added later, but should not block the first provider pass.
+The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, `reasons`, and `source_refs`. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 HTTP provider path.
 
 Socket provider docs should show explicit opt-in:
 
@@ -149,16 +149,16 @@ provider:
 
 ## Implementation checklist
 
-Current attach-guard code includes the verdict semantics layer. The networked
-Open Score provider/client remains a later implementation pass. See the phased
-plan in [`docs/plans/2026-05-07-open-score-provider-impl.md`](plans/2026-05-07-open-score-provider-impl.md).
+Current attach-guard code includes the verdict semantics layer and the opt-in
+HTTP provider. See the phased plan in
+[`docs/plans/2026-05-07-open-score-provider-impl.md`](plans/2026-05-07-open-score-provider-impl.md).
 
-- [ ] Add provider kind for the next pass: `open-score`.
-- [ ] Add runtime shape for the next pass: HTTP client provider against a local or hosted Attach Open Score-compatible endpoint.
+- [x] Add provider kind: `open-score`.
+- [x] Add runtime shape: HTTP client provider against a configured Attach Open Score-compatible endpoint.
 - [x] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
 - [x] Add fixture-driven tests using public-safe synthetic verdicts.
 - [x] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.
 - [x] Test provider-unavailable behavior via `policy.provider_unavailable_behavior`.
 - [x] Test score polarity so high-risk scores cannot accidentally become high-safety scores.
-- [ ] Preserve source/legal attribution in docs and audit output.
-- [ ] Keep Socket as explicit BYO-token/local provider.
+- [x] Preserve source/legal attribution in docs and audit output.
+- [x] Keep Socket as explicit BYO-token/local provider.
