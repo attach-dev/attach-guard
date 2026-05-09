@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -278,20 +277,18 @@ func TestListVersionsUnsupported(t *testing.T) {
 }
 
 func TestRedirectsReturnUnavailableUnknown(t *testing.T) {
-	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatal("open-score provider followed redirect to another endpoint")
-	}))
-	defer redirectTarget.Close()
-
-	redirectingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
-	}))
-	defer redirectingServer.Close()
-
-	prov, err := New(redirectingServer.URL, 1)
+	prov, err := New("http://open-score.test/v0/verdict", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
+	prov.httpClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "redirect-target.test" {
+			t.Fatal("open-score provider followed redirect to another endpoint")
+		}
+		resp := jsonResponse(http.StatusFound, "")
+		resp.Header.Set("Location", "http://redirect-target.test/v0/verdict")
+		return resp, nil
+	})
 
 	info, err := prov.GetPackageScore(context.Background(), api.EcosystemNPM, "synthetic-pkg", "1.0.0")
 	if err != nil {

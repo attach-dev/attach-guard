@@ -32,6 +32,19 @@ type Provider struct {
 	httpClient *http.Client
 }
 
+// Option customizes an Open Score provider.
+type Option func(*Provider)
+
+// WithHTTPClient overrides the default HTTP client. It is primarily useful for
+// local tests that need to keep HTTP traffic in-process.
+func WithHTTPClient(client *http.Client) Option {
+	return func(p *Provider) {
+		if client != nil {
+			p.httpClient = client
+		}
+	}
+}
+
 type verdictRequest struct {
 	Ecosystem api.Ecosystem `json:"ecosystem"`
 	Name      string        `json:"name"`
@@ -69,7 +82,7 @@ func (l *sourceRefList) UnmarshalJSON(data []byte) error {
 
 // New creates an Attach Open Score HTTP provider. A timeoutSeconds value of 0
 // uses DefaultTimeoutSeconds; positive values are used as-is.
-func New(endpoint string, timeoutSeconds int) (*Provider, error) {
+func New(endpoint string, timeoutSeconds int, opts ...Option) (*Provider, error) {
 	endpoint, err := validateEndpoint(endpoint)
 	if err != nil {
 		return nil, err
@@ -81,7 +94,7 @@ func New(endpoint string, timeoutSeconds int) (*Provider, error) {
 		timeoutSeconds = DefaultTimeoutSeconds
 	}
 
-	return &Provider{
+	prov := &Provider{
 		endpoint: endpoint,
 		httpClient: &http.Client{
 			Timeout: time.Duration(timeoutSeconds) * time.Second,
@@ -89,7 +102,13 @@ func New(endpoint string, timeoutSeconds int) (*Provider, error) {
 				return http.ErrUseLastResponse
 			},
 		},
-	}, nil
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(prov)
+		}
+	}
+	return prov, nil
 }
 
 // Name returns the provider name.
