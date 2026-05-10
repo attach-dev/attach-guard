@@ -41,11 +41,13 @@ go test ./internal/policy ./internal/versionselect ./internal/cli ./e2e -run 'Op
 
 What this covers:
 
+- A local `httptest` Attach Open Score-compatible HTTP server can drive the configured `provider.kind: open-score` evaluator path without real network access.
 - `ALLOW` is handled as a verdict and is not accidentally denied because an Open Score risk score was copied into a legacy lower-is-worse safety field.
 - `DENY` blocks even when a high risk score might otherwise look like a high safety score if polarity were inverted.
 - `ASK` maps to local review/confirmation.
-- `UNKNOWN` maps to local ask/warn by default and follows explicit mode config when configured.
+- `UNKNOWN` and provider HTTP failures map to local ask/warn by default and follow explicit mode config when configured.
 - Provider unavailable behavior follows `policy.provider_unavailable_behavior`.
+- Open Score reasons and `source_refs` survive into evaluation and audit-visible structures.
 - Unpinned-version selection preserves Open Score-style verdict reasons when it suggests or rejects candidate versions.
 
 Then run the full suite before sending a docs PR:
