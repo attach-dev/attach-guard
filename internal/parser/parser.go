@@ -159,6 +159,11 @@ func parseCommandSubstitutionsAll(tokens []string, rawCommand string, substituti
 
 func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int) bool {
 	if substitutionDepth >= maxCommandSubstitutionDepth {
+		for _, tok := range tokens {
+			if hasActiveCommandSubstitution(tok) {
+				return true
+			}
+		}
 		return false
 	}
 

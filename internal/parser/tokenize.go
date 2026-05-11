@@ -109,6 +109,9 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 				var hereDocSubstitutions []string
 				i, hereDocSubstitutions = skipHereDocBodies(runes, i+1, pendingHereDocs, markActiveCommandSubstitutions)
 				tokens = append(tokens, hereDocSubstitutions...)
+				if len(hereDocSubstitutions) > 0 {
+					tokens = append(tokens, ";")
+				}
 				pendingHereDocs = nil
 			}
 

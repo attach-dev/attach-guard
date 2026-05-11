@@ -455,6 +455,19 @@ func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
 	}
 }
 
+func TestParseAll_CommandSubstitutionInsideUnquotedHereDocWithFollowingCommand(t *testing.T) {
+	results := ParseAll("cat <<EOF\n$(npm install safe-pkg)\nEOF\npnpm add evil-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want heredoc substitution and following command: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want heredoc npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("second parsed command = %#v, want following pnpm add evil-pkg", results[1])
+	}
+}
+
 func TestParseAll_CommandSubstitutionInPreActionFlagPreservesOuterInstall(t *testing.T) {
 	results := ParseAll("npm --prefix=$(npm install safe-pkg >/dev/null; printf .) install bad-pkg")
 	if len(results) != 2 {
@@ -471,6 +484,9 @@ func TestParseAll_CommandSubstitutionInPreActionFlagPreservesOuterInstall(t *tes
 func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {
 	if !LooksLikeInstall("echo $(some-wrapper npm install evil-pkg)") {
 		t.Fatal("LooksLikeInstall returned false for install hidden inside command substitution")
+	}
+	if !LooksLikeInstall("echo $(echo $(echo $(echo $(echo $(npm install depth-limit-pkg)))))") {
+		t.Fatal("LooksLikeInstall returned false for command substitution at depth limit")
 	}
 	if LooksLikeInstall("echo '$(npm install literal-pkg)'") {
 		t.Fatal("LooksLikeInstall returned true for single-quoted literal command substitution")
