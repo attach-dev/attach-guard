@@ -469,6 +469,9 @@ func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
 	if !LooksLikeInstall("cat <<EOF\n`npm install backtick-pkg`\nEOF") {
 		t.Fatal("LooksLikeInstall returned false for backtick install hidden inside unquoted heredoc")
 	}
+	if !LooksLikeInstall("cat <<EOF\n$(\nnpm install multiline-pkg\n)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for multiline command substitution inside unquoted heredoc")
+	}
 }
 
 func TestParseAll_CommandSubstitutionInsideUnquotedHereDocWithFollowingCommand(t *testing.T) {
@@ -507,6 +510,27 @@ func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
 	}
 	if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
 		t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+	}
+}
+
+func TestParseAll_ProcessSubstitutionCapturesNestedInstall(t *testing.T) {
+	tests := []string{
+		"cat <(npm install evil-pkg)",
+		"cat >(npm install evil-pkg)",
+	}
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			results := ParseAll(cmd)
+			if len(results) != 1 {
+				t.Fatalf("ParseAll returned %d commands, want process-substitution install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("parsed command = %#v, want process-substitution npm install evil-pkg", results[0])
+			}
+			if !LooksLikeInstall(cmd) {
+				t.Fatalf("LooksLikeInstall(%q) = false, want true", cmd)
+			}
+		})
 	}
 }
 
@@ -552,8 +576,8 @@ func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) 
 			if len(results) != 1 {
 				t.Fatalf("ParseAll returned %d commands, want suspicious synthesized install: %#v", len(results), results)
 			}
-			if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
-				t.Fatalf("parsed command = %#v, want suspicious unparsed npm install", results[0])
+			if results[0].PackageManager != "dynamic-shell" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+				t.Fatalf("parsed command = %#v, want suspicious unparsed dynamic-shell install", results[0])
 			}
 			if !LooksLikeInstall(tt.command) {
 				t.Fatalf("LooksLikeInstall(%q) = false, want true", tt.command)

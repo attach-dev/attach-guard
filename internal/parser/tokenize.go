@@ -111,6 +111,23 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 			}
 			current.WriteRune(r)
 
+		case (r == '<' || r == '>') && !inSingle && i+1 < len(runes) && runes[i+1] == '(':
+			if end, inner, ok := scanProcessSubstitution(runes, i); ok {
+				if markActiveCommandSubstitutions {
+					current.WriteString(activeCommandSubstitutionPrefix)
+					current.WriteString(inner)
+					current.WriteString(activeCommandSubstitutionSuffix)
+				} else {
+					current.WriteRune(r)
+					current.WriteRune('(')
+					current.WriteString(inner)
+					current.WriteRune(')')
+				}
+				i = end
+				continue
+			}
+			current.WriteRune(r)
+
 		case inSingle || inDouble:
 			current.WriteRune(r)
 
@@ -198,6 +215,7 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc, markActiv
 	pos := start
 	var substitutions []string
 	for _, doc := range docs {
+		bodyStart := pos
 		for pos < len(runes) {
 			lineStart := pos
 			lineEnd := lineStart
@@ -205,13 +223,15 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc, markActiv
 				lineEnd++
 			}
 
-			lineRunes := runes[lineStart:lineEnd]
-			line := string(lineRunes)
+			line := string(runes[lineStart:lineEnd])
 			compareLine := line
 			if doc.stripTabs {
 				compareLine = strings.TrimLeft(compareLine, "\t")
 			}
 			if compareLine == doc.delimiter {
+				if markActiveCommandSubstitutions && doc.expand {
+					substitutions = append(substitutions, activeSubstitutionTokensInRunes(runes[bodyStart:lineStart])...)
+				}
 				if lineEnd < len(runes) && runes[lineEnd] == '\n' {
 					pos = lineEnd + 1
 				} else {
@@ -220,11 +240,10 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc, markActiv
 				break
 			}
 
-			if markActiveCommandSubstitutions && doc.expand {
-				substitutions = append(substitutions, activeSubstitutionTokensInRunes(lineRunes)...)
-			}
-
 			if lineEnd >= len(runes) {
+				if markActiveCommandSubstitutions && doc.expand {
+					substitutions = append(substitutions, activeSubstitutionTokensInRunes(runes[bodyStart:])...)
+				}
 				return len(runes), substitutions
 			}
 			pos = lineEnd + 1
@@ -354,6 +373,57 @@ func scanBacktickCommandSubstitution(runes []rune, start int) (end int, inner st
 		}
 		if r == '`' {
 			return i, string(runes[start+1 : i]), true
+		}
+	}
+	return 0, "", false
+}
+
+func scanProcessSubstitution(runes []rune, start int) (end int, inner string, ok bool) {
+	if start+1 >= len(runes) || (runes[start] != '<' && runes[start] != '>') || runes[start+1] != '(' {
+		return 0, "", false
+	}
+	return scanParenBody(runes, start+1)
+}
+
+func scanParenBody(runes []rune, openParen int) (end int, inner string, ok bool) {
+	if openParen >= len(runes) || runes[openParen] != '(' {
+		return 0, "", false
+	}
+	depth := 1
+	inSingle := false
+	inDouble := false
+	escaped := false
+	for i := openParen + 1; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		if r == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+		if r == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+		if inSingle || inDouble {
+			continue
+		}
+		if r == '$' && i+1 < len(runes) && runes[i+1] == '(' {
+			depth++
+			i++
+			continue
+		}
+		if r == ')' {
+			depth--
+			if depth == 0 {
+				return i, string(runes[openParen+1 : i]), true
+			}
 		}
 	}
 	return 0, "", false

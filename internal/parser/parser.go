@@ -195,7 +195,7 @@ func suspiciousPackageManager(rawCommand string) string {
 			}
 		}
 	}
-	return "npm"
+	return "dynamic-shell"
 }
 
 func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int) bool {

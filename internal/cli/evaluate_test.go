@@ -564,6 +564,21 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 	}
 }
 
+func TestEvaluate_DynamicCommandSubstitutionAsksEvenWhenNPMDisabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.PackageManagers.NPM = false
+	cfg.PackageManagers.PNPM = true
+	eval := NewEvaluator(cfg, provider.NewMockProvider())
+
+	result, err := eval.Evaluate(context.Background(), "$(printf 'pnpm add leftpad')", api.ModeShell)
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("Decision = %s, want Ask: %s", result.Decision, result.Reason)
+	}
+}
+
 func TestEvaluate_CommonBooleanFlagsStillEvaluatePackages(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
