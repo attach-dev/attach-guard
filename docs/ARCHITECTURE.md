@@ -36,7 +36,7 @@ raw command string
          │
          ▼
 ┌──────────┐
-│  Provider │ ── scores, versions, alerts, or Attach Open Score-style verdicts
+│  Provider │ ── scores, versions, alerts, or Attach Open Score-compatible verdicts
 └────┬─────┘
      │
      ▼
@@ -72,11 +72,11 @@ type Provider interface {
 ```
 
 Current implementation status:
-- the default adapter is Socket-backed and should be treated as an explicit local BYO-token provider
-- an opt-in `open-score` HTTP provider maps Attach Open Score-compatible verdict responses into `ProviderVerdict`; see [`docs/OPEN_SCORE_PROVIDER.md`](OPEN_SCORE_PROVIDER.md) for verdict mapping and source/legal constraints
+- the current code default is Socket-backed only for explicit local BYO-token use and must not be described as hosted/default Attach scoring
+- an opt-in `open-score` HTTP provider maps explicitly configured Attach Open Score-compatible verdict responses into `ProviderVerdict`; see [`docs/OPEN_SCORE_PROVIDER.md`](OPEN_SCORE_PROVIDER.md) for verdict mapping and source/legal constraints
 - no proprietary provider types should leak into the policy engine
 
-The current Socket adapter normalizes Socket API responses into internal `VersionInfo` and `PackageScore` types. Open Score integration avoids directly mapping Open Score's risk score into the existing safety-score fields because the polarity is opposite; it uses verdict-first mapping and carries risk score only in `ProviderVerdict.RiskScore`.
+The local Socket adapter normalizes Socket API responses into internal `VersionInfo` and `PackageScore` types for BYO-token runs. Open Score integration avoids directly mapping Open Score's risk score into the existing safety-score fields because the polarity is opposite; it uses verdict-first mapping and carries risk score only in `ProviderVerdict.RiskScore`.
 
 To add a new provider:
 1. Implement the `Provider` interface
@@ -153,7 +153,7 @@ internal/
     spec/             Shared package spec parsing
   provider/           Provider interface + mock
     openscore/        Attach Open Score-compatible HTTP verdict provider
-    socket/           Socket.dev adapter
+    socket/           Socket.dev local BYO-token adapter
   policy/             Policy engine
   rewrite/            Command rewriting
   versionselect/      Version selection for unpinned packages

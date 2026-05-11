@@ -4,7 +4,7 @@
 
 - [x] npm parser and interceptor
 - [x] pnpm parser and interceptor
-- [x] Socket provider adapter
+- [x] Socket BYO-token local provider adapter
 - [x] Policy engine with allow/ask/deny
 - [x] Minimum package age enforcement
 - [x] Version selection and command rewrite

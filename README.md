@@ -1,6 +1,6 @@
 # attach-guard
 
-Supply chain security plugin for Claude Code. Blocks compromised packages before they're installed.
+AI agents install packages. Attach checks them first.
 
 <video src="https://github.com/user-attachments/assets/efca5e13-8e3f-44b7-9aab-c653d048ad0d" width="100%" autoplay loop muted playsinline></video>
 
@@ -15,13 +15,13 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 - Installs as a Claude Code plugin — no manual hook configuration needed
 - Intercepts `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands via PreToolUse hooks
 - Evaluates packages with the configured provider before install commands run
-- Uses the current Socket.dev adapter only as an explicit bring-your-own-token local provider, not a hosted/default scoring source
+- Supports explicit provider configuration, including Attach Open Score-compatible verdict endpoints and local BYO-token providers
 - Denies known malware and high-confidence dangerous packages automatically
 - Asks for confirmation on gray-band packages and provider-unavailable cases in local mode
 - Rewrites unpinned installs to safe pinned versions when possible
 - Logs every decision to a local JSONL audit trail
 
-Attach Open Score is the first-party provider direction. An opt-in `open-score` HTTP provider is available for configured Attach Open Score-compatible verdict endpoints; Socket remains the default local BYO-token provider. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) and [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe verification.
+Attach Open Score is the first-party scoring direction. Today, `open-score` is an opt-in HTTP provider for explicitly configured Attach Open Score-compatible verdict endpoints; no hosted/default Attach scoring endpoint is baked into attach-guard. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) and [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe verification.
 
 ## Smart Version Replacement: Block Without Breaking Flow
 
@@ -89,7 +89,7 @@ Security enforcement requires interception at the tool-call boundary, before exe
 
 ### Quick Start: Claude Code Plugin
 
-The fastest way to try the current packaged plugin. Today's default plugin path uses the local bring-your-own-token Socket.dev provider for real scoring. Attach Open Score is the first-party direction and can be configured explicitly via the opt-in `open-score` HTTP provider; Socket must not be treated as hosted/default Attach scoring.
+The fastest way to try the current packaged plugin. It installs the hook and local config; provider credentials remain explicit local setup. Attach Open Score is the first-party scoring direction, and `open-score` can be configured against compatible verdict endpoints. No hosted/default Attach scoring endpoint ships in this package.
 
 ```bash
 # Add the marketplace and install (one-time)
@@ -103,13 +103,13 @@ Or from within a Claude Code session:
 /plugin install attach-guard@attach-dev
 ```
 
-During installation or enablement, the current Socket-backed plugin path prompts for your Socket API token (stored securely in your system keychain). Get a free token at [socket.dev](https://socket.dev). This token is for local BYO-provider use only.
+During installation or enablement, the current local BYO-token provider path may prompt for a provider API token (stored securely in your system keychain). That token is for explicit local provider use only.
 
 > **If the install/enable prompt didn't appear**, re-trigger it with:
 > ```bash
 > claude plugin disable attach-guard@attach-dev && claude plugin enable attach-guard@attach-dev
 > ```
-> Or set the token as an environment variable: `export SOCKET_API_TOKEN="your-token"` in your shell profile.
+> Or set the provider-specific token environment variable in your shell profile before starting Claude Code.
 
 The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no further setup needed.
 
@@ -129,7 +129,7 @@ claude --plugin-dir ./plugin
 
 The binary auto-builds from source on the first `/explain` invocation.
 
-Local `claude --plugin-dir ./plugin` development may not run the marketplace install/enable config flow. If Claude does not inject the plugin config in this mode, export `SOCKET_API_TOKEN` manually before starting Claude Code.
+Local `claude --plugin-dir ./plugin` development may not run the marketplace install/enable config flow. If Claude does not inject the plugin config in this mode, configure any required provider token in your shell before starting Claude Code.
 
 ### Manual Installation
 
@@ -138,7 +138,7 @@ For use without the plugin system, or to install the binary globally.
 #### Prerequisites
 
 - [Go 1.21+](https://go.dev/dl/) (to build from source; not needed for the plugin install above)
-- A [Socket.dev](https://socket.dev) API token only when using the current Socket BYO-token provider path
+- A provider API token only when using an explicit BYO-token local provider path
 
 #### Step 1: Build and install the binary
 
@@ -166,13 +166,9 @@ attach-guard version
 # attach-guard v0.1.0
 ```
 
-#### Step 2: Set up a Socket API token for the current BYO-provider path
+#### Step 2: Configure provider credentials if needed
 
-```bash
-export SOCKET_API_TOKEN="your-token-here"
-```
-
-Add this to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist across sessions.
+Provider setup is explicit: BYO-token local providers require their provider-specific token environment variable, while Attach Open Score-compatible HTTP endpoints require `provider.kind: open-score` plus an `endpoint`.
 
 #### Step 3: Initialize config
 
@@ -181,7 +177,7 @@ attach-guard config init
 # Default config written to ~/.attach-guard/config.yaml
 ```
 
-This creates `~/.attach-guard/config.yaml` with sensible defaults. See [Configuration](#configuration) below to customize policy thresholds.
+This creates `~/.attach-guard/config.yaml` with compatibility defaults. Review [Configuration](#configuration) before relying on provider behavior; hosted/default Attach scoring is planned, not shipped in this package.
 
 #### Step 4: Add the Claude Code hook
 
@@ -284,11 +280,11 @@ attach-guard run --dry-run codex --sandbox read-only "Review this diff"
 
 Default config location: `~/.attach-guard/config.yaml`
 
-Current provider configuration still defaults to the Socket adapter in code. Treat this as a legacy/local BYO-token default; use `open-score` explicitly when pointing attach-guard at an Attach Open Score-compatible verdict endpoint. Do not use Socket as hosted/default Attach scoring.
+`attach-guard config init` currently writes a compatibility config for the local BYO-token provider path. That compatibility default is not hosted/default Attach scoring; use it only with an explicit local provider token. Attach Open Score is the first-party scoring direction, but hosted/default Attach scoring is planned and not shipped in this package.
 
 ```yaml
 provider:
-  kind: socket                     # explicit BYO-token local provider today; Open Score is the first-party direction
+  kind: socket                     # explicit local BYO-token provider
   api_token_env: SOCKET_API_TOKEN
 policy:
   deny_known_malware: true
@@ -328,6 +324,8 @@ provider:
 
 The `open-score` provider posts only public package coordinates (`ecosystem`, `name`, `version`) and consumes verdict fields (`decision`, optional `score`, `reasons`, `source_refs`). Provider failures and malformed responses map to `UNKNOWN`/provider-unavailable behavior, never `ALLOW`.
 
+For BYO-token local provider configuration, see [Advanced: BYO-token local providers](#advanced-byo-token-local-providers).
+
 ### Environment variable overrides
 
 - `ATTACH_GUARD_LOG_PATH` — override log path
@@ -351,7 +349,7 @@ Highest priority wins (later sources override earlier):
 2. Check provider availability
 3. Deny known malware
 4. Deny versions under minimum age (48 hours default)
-5. Use Attach Open Score-style provider verdicts when present (`ALLOW`, `ASK`, `DENY`, `UNKNOWN`)
+5. Use Attach Open Score-compatible provider verdicts when present (`ALLOW`, `ASK`, `DENY`, `UNKNOWN`)
 6. Deny scores below hard threshold (supply chain < 50) for legacy score providers
 7. Ask on gray-band scores (50-70)
 8. Ask on critical/high alerts
@@ -393,45 +391,34 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 }
 ```
 
-## Socket BYO-token provider quota
+## Advanced: BYO-token local providers
 
-The current Socket adapter uses the [Socket.dev API](https://socket.dev) when the user explicitly configures the BYO-token Socket provider. This section is for that local provider path only; Socket data must not be used as a default Attach Open Score input/source absent an explicit partnership.
+The current Socket.dev adapter is available only as an explicit local BYO-token provider. Socket data must not be used as default Attach scoring or as an Attach Open Score input/source unless a future written partnership and policy explicitly permit it.
 
-| Ecosystem | Endpoint | Cost per call |
-|---|---|---|
-| npm / pnpm | `GET /v0/npm/{name}/{version}/score` | 10 units |
-| PyPI, Go, Cargo | `POST /v0/purl` (batch) | 100 units |
-
-**What this means in practice:**
-- npm packages: ~50 individual version scores per hour
-- PyPI/Go/Cargo packages: ~5 batch scoring calls per hour (each batch scores up to 10 versions)
-- Pinned installs (e.g. `pip install litellm==1.82.8`) use one call to score a single version
-- Unpinned installs (e.g. `pip install litellm`) use one batch call to score up to 10 candidate versions
-
-**When quota is exhausted**, provider calls fail. Current behavior depends on where the failure happens:
-- Provider startup/unavailability follows `provider_unavailable_behavior`; local defaults to ask/warn, and CI/team fail-closed behavior requires explicit configuration such as `provider_unavailable_behavior.ci: deny`.
-- Pinned installs can still fail closed if a score request errors after the provider is considered available; do not present quota exhaustion as guaranteed local ask/warn for every path.
-- Unpinned installs cannot offer a reliable safe-version rewrite because the rewrite feature requires real provider results to identify which version passes policy.
-
-To check your remaining quota:
-```bash
-curl -s -H "Authorization: Bearer $SOCKET_API_TOKEN" "https://api.socket.dev/v0/quota"
+```yaml
+provider:
+  kind: socket
+  api_token_env: SOCKET_API_TOKEN
 ```
 
-Quota resets hourly. For higher limits, see [Socket.dev pricing](https://socket.dev/pricing).
+```bash
+export SOCKET_API_TOKEN="your-token-here"
+```
+
+Provider calls can fail when a local BYO-token account is unavailable, rate-limited, or out of quota. Provider startup/unavailability follows `provider_unavailable_behavior`; local defaults to ask/warn, and CI/team fail-closed behavior requires explicit configuration such as `provider_unavailable_behavior.ci: deny`. Individual scoring errors can still block a pinned install, and unpinned rewrites need real provider results to identify a version that passes policy.
 
 ## Current Limitations
 
 - Direct `pip` / `pip3` (including `uv pip`), `go get` / `go install`, and `cargo add` / `cargo install` are supported; `python -m pip` remains passthrough for now
 - pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
-- Current default provider implementation is Socket BYO-token/local; Attach Open Score first-party provider integration is available by explicit `open-score` configuration
-- PyPI, Go, and Cargo scoring through the Socket BYO provider uses Socket's `POST /v0/purl` endpoint, which has higher quota cost (100 units) compared to npm (10 units)
+- Hosted/default Attach scoring is planned; today, Attach Open Score-compatible verdicts require explicit `open-score` endpoint configuration
+- Local BYO-token providers can be affected by upstream availability, rate limits, or quota during evaluation and version rewrite
 - No transitive dependency analysis
 - No lockfile graph support
 - Single provider at a time
 - No org-level policy distribution
 - No remote audit export
-- Socket API response format may vary; adapter is based on documented endpoints
+- Vendor API response formats may vary for local BYO-token providers; adapters are based on documented endpoints
 
 ## Development
 
