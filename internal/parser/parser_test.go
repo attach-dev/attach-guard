@@ -328,6 +328,10 @@ func TestParseAll_HereDocBodiesAreData(t *testing.T) {
 			name:    "tab-stripping heredoc body is not a command",
 			command: "cat <<-EOF\n\tnpm install phantom\n\tEOF",
 		},
+		{
+			name:    "quoted heredoc delimiter suppresses command substitutions",
+			command: "cat <<'EOF'\n$(npm install literal-pkg)\nEOF",
+		},
 	}
 
 	for _, tt := range tests {
@@ -429,6 +433,22 @@ func TestParseAll_CommandSubstitutionCapturesNestedInstall(t *testing.T) {
 	}
 	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
 		t.Fatalf("second parsed command = %#v, want pnpm add safe-pkg", results[1])
+	}
+}
+
+func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
+	results := ParseAll("cat <<EOF\n$(npm install evil-pkg)\nEOF")
+	if len(results) != 1 {
+		t.Fatalf("ParseAll returned %d commands, want 1: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("parsed command = %#v, want heredoc substitution npm install evil-pkg", results[0])
+	}
+	if !LooksLikeInstall("cat <<EOF\n$(npm install evil-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for install hidden inside unquoted heredoc substitution")
+	}
+	if LooksLikeInstall("cat <<EOF\n\\$(npm install escaped-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned true for escaped heredoc substitution")
 	}
 }
 

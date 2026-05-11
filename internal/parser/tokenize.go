@@ -10,6 +10,7 @@ const (
 type pendingHereDoc struct {
 	delimiter string
 	stripTabs bool
+	expand    bool
 }
 
 // Tokenize splits a command string into tokens, respecting basic quoting.
@@ -30,6 +31,7 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 	inSingle := false
 	inDouble := false
 	escaped := false
+	currentHadQuote := false
 	expectHereDocDelimiter := false
 	nextHereDocStripTabs := false
 	var pendingHereDocs []pendingHereDoc
@@ -43,11 +45,13 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 				pendingHereDocs = append(pendingHereDocs, pendingHereDoc{
 					delimiter: tok,
 					stripTabs: nextHereDocStripTabs,
+					expand:    !currentHadQuote,
 				})
 				expectHereDocDelimiter = false
 				nextHereDocStripTabs = false
 			}
 			current.Reset()
+			currentHadQuote = false
 		}
 	}
 
@@ -62,12 +66,17 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 
 		switch {
 		case r == '\\' && !inSingle:
+			if expectHereDocDelimiter {
+				currentHadQuote = true
+			}
 			escaped = true
 
 		case r == '\'' && !inDouble:
+			currentHadQuote = true
 			inSingle = !inSingle
 
 		case r == '"' && !inSingle:
+			currentHadQuote = true
 			inDouble = !inDouble
 
 		case r == '$' && !inSingle && i+1 < len(runes) && runes[i+1] == '(':
@@ -97,7 +106,9 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 			flush()
 			tokens = append(tokens, ";")
 			if len(pendingHereDocs) > 0 {
-				i = skipHereDocBodies(runes, i+1, pendingHereDocs)
+				var hereDocSubstitutions []string
+				i, hereDocSubstitutions = skipHereDocBodies(runes, i+1, pendingHereDocs, markActiveCommandSubstitutions)
+				tokens = append(tokens, hereDocSubstitutions...)
 				pendingHereDocs = nil
 			}
 
@@ -164,8 +175,9 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 	return tokens
 }
 
-func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc) int {
+func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc, markActiveCommandSubstitutions bool) (int, []string) {
 	pos := start
+	var substitutions []string
 	for _, doc := range docs {
 		for pos < len(runes) {
 			lineStart := pos
@@ -174,7 +186,8 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc) int {
 				lineEnd++
 			}
 
-			line := string(runes[lineStart:lineEnd])
+			lineRunes := runes[lineStart:lineEnd]
+			line := string(lineRunes)
 			compareLine := line
 			if doc.stripTabs {
 				compareLine = strings.TrimLeft(compareLine, "\t")
@@ -188,13 +201,36 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc) int {
 				break
 			}
 
+			if markActiveCommandSubstitutions && doc.expand {
+				substitutions = append(substitutions, activeSubstitutionTokensInRunes(lineRunes)...)
+			}
+
 			if lineEnd >= len(runes) {
-				return len(runes)
+				return len(runes), substitutions
 			}
 			pos = lineEnd + 1
 		}
 	}
-	return pos - 1
+	return pos - 1, substitutions
+}
+
+func activeSubstitutionTokensInRunes(runes []rune) []string {
+	var tokens []string
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != '$' || i+1 >= len(runes) || runes[i+1] != '(' {
+			continue
+		}
+		if i > 0 && runes[i-1] == '\\' {
+			continue
+		}
+		end, inner, ok := scanCommandSubstitution(runes, i)
+		if !ok {
+			continue
+		}
+		tokens = append(tokens, activeCommandSubstitutionPrefix+inner+activeCommandSubstitutionSuffix)
+		i = end
+	}
+	return tokens
 }
 
 func hereDocOperator(tok string) (stripTabs bool, ok bool) {
