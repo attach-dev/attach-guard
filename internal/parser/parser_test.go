@@ -24,6 +24,17 @@ func TestTokenize(t *testing.T) {
 		{"ls|npm install axios", []string{"ls", "|", "npm", "install", "axios"}},
 		// Newlines as command separators
 		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
+		// Redirections without spaces
+		{"npm install axios>install.log", []string{"npm", "install", "axios", ">", "install.log"}},
+		{"npm install axios >> install.log", []string{"npm", "install", "axios", ">>", "install.log"}},
+		{"npm install axios 2>err.log", []string{"npm", "install", "axios", "2>", "err.log"}},
+		{"npm install axios 2>&1", []string{"npm", "install", "axios", "2>&", "1"}},
+		{"npm install axios &>combined.log", []string{"npm", "install", "axios", "&>", "combined.log"}},
+		{"npm install < packages.txt", []string{"npm", "install", "<", "packages.txt"}},
+		// Command substitutions are kept as one token so inner spaces/operators
+		// do not become outer argv or command separators.
+		{"npm install $(echo axios)", []string{"npm", "install", "$(echo axios)"}},
+		{"echo $(npm install axios)&&pnpm add zod", []string{"echo", "$(npm install axios)", "&&", "pnpm", "add", "zod"}},
 		// Operators inside quotes should NOT be split
 		{`echo "a&&b"`, []string{"echo", "a&&b"}},
 		{`echo 'a;b'`, []string{"echo", "a;b"}},
@@ -230,6 +241,114 @@ func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
 		if pkg.Name == "&&" || pkg.Name == "npm" || pkg.Name == "install" || pkg.Name == "lodash" {
 			t.Errorf("shell operator or second command token %q should not be a package name", pkg.Name)
 		}
+	}
+}
+
+func TestParse_RedirectionsNotPackageNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+		wantPkg string
+	}{
+		{"npm stdout spaced", "npm install axios > install.log", "npm", "axios"},
+		{"npm stdout attached", "npm install axios>install.log", "npm", "axios"},
+		{"pnpm stderr fd", "pnpm add react 2>err.log", "pnpm", "react"},
+		{"pip stdin", "pip install requests < packages.txt", "pip", "requests"},
+		{"go append stdout", "go get golang.org/x/net >>install.log", "go", "golang.org/x/net"},
+		{"cargo fd duplicate", "cargo add serde 2>&1", "cargo", "serde"},
+		{"leading redirection", "2>err.log npm install lodash", "npm", "lodash"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("PackageManager = %q, want %q", result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.wantPkg {
+				t.Fatalf("Packages = %#v, want one package %q", result.Packages, tt.wantPkg)
+			}
+			if !result.HasUnparsedArgs {
+				t.Fatalf("HasUnparsedArgs = false, want true so redirection is not rewritten away")
+			}
+			for _, pkg := range result.Packages {
+				switch pkg.Name {
+				case ">", ">>", "<", "2>", "2>&", "&>", "install.log", "err.log", "packages.txt", "1":
+					t.Fatalf("redirection token/target %q should not be a package", pkg.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestParseAll_RedirectionsAcrossChainedSegments(t *testing.T) {
+	results := ParseAll("npm install axios > npm.log && pnpm add react 2>pnpm.err")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "axios" {
+		t.Fatalf("first parsed command = %#v, want npm install axios", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want pnpm add react", results[1])
+	}
+}
+
+func TestParse_CommandSubstitutionDynamicArgsNotPackages(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+	}{
+		{"npm", "npm install $(echo axios)", "npm"},
+		{"pnpm", "pnpm add $(printf react)", "pnpm"},
+		{"pip", "pip install $(echo requests)", "pip"},
+		{"go", "go get $(echo golang.org/x/net)", "go"},
+		{"cargo", "cargo add $(echo serde)", "cargo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("PackageManager = %q, want %q", result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("Packages = %#v, want none for dynamic command-substitution args", result.Packages)
+			}
+			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
+				t.Fatalf("unparsed flags = (%v, %v), want both true", result.HasUnparsedArgs, result.HasNonLocalUnparsedArgs)
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionCapturesNestedInstall(t *testing.T) {
+	results := ParseAll("echo $(npm install evil-pkg) && pnpm add safe-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("first parsed command = %#v, want nested npm install evil-pkg", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("second parsed command = %#v, want pnpm add safe-pkg", results[1])
+	}
+}
+
+func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {
+	if !LooksLikeInstall("echo $(some-wrapper npm install evil-pkg)") {
+		t.Fatal("LooksLikeInstall returned false for install hidden inside command substitution")
+	}
+	if LooksLikeInstall("echo '$(npm install literal-pkg)'") {
+		t.Fatal("LooksLikeInstall returned true for single-quoted literal command substitution")
 	}
 }
 
@@ -480,6 +599,7 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
 		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, true},
 		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
+		{"pip greater-than range deferred", "pip install requests>2.0", "pip", 0, "", "", false, true, true},
 		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
 		{"pip inline file index env deferred", "PIP_INDEX_URL=file:///tmp/simple pip install requests", "pip", 0, "", "", false, true, true},
 		{"pip inline local find links env", "PIP_FIND_LINKS=./dist pip install flask", "pip", 0, "", "", false, true, true},
