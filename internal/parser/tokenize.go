@@ -95,6 +95,22 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 			}
 			current.WriteRune(r)
 
+		case r == '`' && !inSingle:
+			if end, inner, ok := scanBacktickCommandSubstitution(runes, i); ok {
+				if markActiveCommandSubstitutions {
+					current.WriteString(activeCommandSubstitutionPrefix)
+					current.WriteString(inner)
+					current.WriteString(activeCommandSubstitutionSuffix)
+				} else {
+					current.WriteRune('`')
+					current.WriteString(inner)
+					current.WriteRune('`')
+				}
+				i = end
+				continue
+			}
+			current.WriteRune(r)
+
 		case inSingle || inDouble:
 			current.WriteRune(r)
 
@@ -220,18 +236,29 @@ func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc, markActiv
 func activeSubstitutionTokensInRunes(runes []rune) []string {
 	var tokens []string
 	for i := 0; i < len(runes); i++ {
-		if runes[i] != '$' || i+1 >= len(runes) || runes[i+1] != '(' {
+		if runes[i] == '$' && i+1 < len(runes) && runes[i+1] == '(' {
+			if isEscapedHereDocDollar(runes, i) {
+				continue
+			}
+			end, inner, ok := scanCommandSubstitution(runes, i)
+			if !ok {
+				continue
+			}
+			tokens = append(tokens, activeCommandSubstitutionPrefix+inner+activeCommandSubstitutionSuffix)
+			i = end
 			continue
 		}
-		if isEscapedHereDocDollar(runes, i) {
-			continue
+		if runes[i] == '`' {
+			if isEscapedHereDocBacktick(runes, i) {
+				continue
+			}
+			end, inner, ok := scanBacktickCommandSubstitution(runes, i)
+			if !ok {
+				continue
+			}
+			tokens = append(tokens, activeCommandSubstitutionPrefix+inner+activeCommandSubstitutionSuffix)
+			i = end
 		}
-		end, inner, ok := scanCommandSubstitution(runes, i)
-		if !ok {
-			continue
-		}
-		tokens = append(tokens, activeCommandSubstitutionPrefix+inner+activeCommandSubstitutionSuffix)
-		i = end
 	}
 	return tokens
 }
@@ -239,6 +266,14 @@ func activeSubstitutionTokensInRunes(runes []rune) []string {
 func isEscapedHereDocDollar(runes []rune, dollarIndex int) bool {
 	backslashes := 0
 	for i := dollarIndex - 1; i >= 0 && runes[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
+}
+
+func isEscapedHereDocBacktick(runes []rune, backtickIndex int) bool {
+	backslashes := 0
+	for i := backtickIndex - 1; i >= 0 && runes[i] == '\\'; i-- {
 		backslashes++
 	}
 	return backslashes%2 == 1
@@ -299,6 +334,28 @@ func scanCommandSubstitution(runes []rune, start int) (end int, inner string, ok
 		}
 	}
 
+	return 0, "", false
+}
+
+func scanBacktickCommandSubstitution(runes []rune, start int) (end int, inner string, ok bool) {
+	if start >= len(runes) || runes[start] != '`' {
+		return 0, "", false
+	}
+	escaped := false
+	for i := start + 1; i < len(runes); i++ {
+		r := runes[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '`' {
+			return i, string(runes[start+1 : i]), true
+		}
+	}
 	return 0, "", false
 }
 

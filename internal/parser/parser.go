@@ -547,6 +547,9 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 }
 
 func dynamicCommandPositionLooksInstallLike(rest []string) bool {
+	if len(rest) == 0 {
+		return true
+	}
 	for i := 0; i < len(rest); i++ {
 		tok := rest[i]
 		if shellOperators[tok] {
@@ -710,7 +713,9 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				result.tokens = rest
 				continue
 			}
-			// Not "uv pip ..." — not guarded, stop unwrapping
+			// Not "uv pip ..." — not guarded, stop unwrapping, but preserve
+			// active command substitutions in ignored uv argv for fail-closed checks.
+			result.discarded = append(result.discarded, result.tokens...)
 			result.tokens = nil
 			return result
 		}
@@ -721,6 +726,7 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 			// "command -v" is introspection (like `which`), not execution.
 			// Return empty to prevent the remaining tokens from being parsed.
 			if base == "command" && len(result.tokens) > 0 && (result.tokens[0] == "-v" || result.tokens[0] == "-V") {
+				result.discarded = append(result.discarded, result.tokens...)
 				result.tokens = nil
 				return result
 			}

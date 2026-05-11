@@ -38,6 +38,7 @@ func TestTokenize(t *testing.T) {
 		// do not become outer argv or command separators.
 		{"npm install $(echo axios)", []string{"npm", "install", "$(echo axios)"}},
 		{"echo $(npm install axios)&&pnpm add zod", []string{"echo", "$(npm install axios)", "&&", "pnpm", "add", "zod"}},
+		{"echo `npm install axios`&&pnpm add zod", []string{"echo", "`npm install axios`", "&&", "pnpm", "add", "zod"}},
 		// Operators inside quotes should NOT be split
 		{`echo "a&&b"`, []string{"echo", "a&&b"}},
 		{`echo 'a;b'`, []string{"echo", "a;b"}},
@@ -424,15 +425,27 @@ func TestParseAll_CommandSubstitutionInDiscardedPrefixes(t *testing.T) {
 }
 
 func TestParseAll_CommandSubstitutionCapturesNestedInstall(t *testing.T) {
-	results := ParseAll("echo $(npm install evil-pkg) && pnpm add safe-pkg")
-	if len(results) != 2 {
-		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"dollar parens", "echo $(npm install evil-pkg) && pnpm add safe-pkg"},
+		{"backticks", "echo `npm install evil-pkg` && pnpm add safe-pkg"},
 	}
-	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
-		t.Fatalf("first parsed command = %#v, want nested npm install evil-pkg", results[0])
-	}
-	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
-		t.Fatalf("second parsed command = %#v, want pnpm add safe-pkg", results[1])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want nested npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want pnpm add safe-pkg", results[1])
+			}
+		})
 	}
 }
 
@@ -452,6 +465,9 @@ func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
 	}
 	if !LooksLikeInstall("cat <<EOF\n\\\\$(npm install even-backslash-pkg)\nEOF") {
 		t.Fatal("LooksLikeInstall returned false for heredoc substitution after even backslashes")
+	}
+	if !LooksLikeInstall("cat <<EOF\n`npm install backtick-pkg`\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for backtick install hidden inside unquoted heredoc")
 	}
 }
 
@@ -494,6 +510,31 @@ func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
 	}
 }
 
+func TestParseAll_SuppressedWrapperSubstitutionDoesNotHideCleanSegment(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"command introspection", "command -v $(npm install evil-pkg) && npm install safe-pkg"},
+		{"uv non-pip", "uv add $(npm install evil-pkg) && npm install safe-pkg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll returned %d commands, want hidden substitution plus outer install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want hidden npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+			}
+		})
+	}
+}
+
 func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -502,6 +543,7 @@ func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) 
 		{"dynamic package-manager", "$(printf npm) install leftpad"},
 		{"dynamic package-manager with separate-value flag", "$(printf npm) --prefix app install leftpad"},
 		{"dynamic package-manager and action", "$(printf 'npm install') leftpad"},
+		{"dynamic full argv", "$(printf 'npm install leftpad')"},
 	}
 
 	for _, tt := range tests {
