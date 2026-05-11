@@ -450,6 +450,22 @@ func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
 	if LooksLikeInstall("cat <<EOF\n\\$(npm install escaped-pkg)\nEOF") {
 		t.Fatal("LooksLikeInstall returned true for escaped heredoc substitution")
 	}
+	if !LooksLikeInstall("cat <<EOF\n\\\\$(npm install even-backslash-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for heredoc substitution after even backslashes")
+	}
+}
+
+func TestParseAll_CommandSubstitutionInPreActionFlagPreservesOuterInstall(t *testing.T) {
+	results := ParseAll("npm --prefix=$(npm install safe-pkg >/dev/null; printf .) install bad-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want inner and outer npm installs: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want inner npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "npm" || !results[1].HasNonLocalUnparsedArgs {
+		t.Fatalf("second parsed command = %#v, want outer npm install marked non-local/dynamic", results[1])
+	}
 }
 
 func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {

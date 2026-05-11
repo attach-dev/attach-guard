@@ -220,7 +220,7 @@ func activeSubstitutionTokensInRunes(runes []rune) []string {
 		if runes[i] != '$' || i+1 >= len(runes) || runes[i+1] != '(' {
 			continue
 		}
-		if i > 0 && runes[i-1] == '\\' {
+		if isEscapedHereDocDollar(runes, i) {
 			continue
 		}
 		end, inner, ok := scanCommandSubstitution(runes, i)
@@ -231,6 +231,14 @@ func activeSubstitutionTokensInRunes(runes []rune) []string {
 		i = end
 	}
 	return tokens
+}
+
+func isEscapedHereDocDollar(runes []rune, dollarIndex int) bool {
+	backslashes := 0
+	for i := dollarIndex - 1; i >= 0 && runes[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }
 
 func hereDocOperator(tok string) (stripTabs bool, ok bool) {

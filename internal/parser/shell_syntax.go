@@ -24,13 +24,26 @@ func prepareParserTokens(tokens []string) shellTokenInfo {
 	for _, tok := range info.tokens {
 		if hasActiveCommandSubstitution(tok) {
 			info.hadCommandSubstitution = true
-			prepared = append(prepared, dynamicShellArg)
+			prepared = append(prepared, dynamicShellToken(tok))
 			continue
 		}
 		prepared = append(prepared, tok)
 	}
 	info.tokens = prepared
 	return info
+}
+
+func dynamicShellToken(tok string) string {
+	start := strings.Index(tok, activeCommandSubstitutionPrefix)
+	if start == -1 {
+		return tok
+	}
+	if strings.HasPrefix(tok, "-") {
+		if eq := strings.LastIndex(tok[:start], "="); eq >= 0 {
+			return tok[:eq+1] + dynamicShellArg
+		}
+	}
+	return dynamicShellArg
 }
 
 func stripRedirectionTokens(tokens []string) shellTokenInfo {
