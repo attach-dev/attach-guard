@@ -394,15 +394,8 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 	for i < len(tokens) {
 		base := filepath.Base(tokens[i])
 
-		if hasActiveCommandSubstitution(tokens[i]) {
-			for j := i + 1; j < len(tokens); j++ {
-				if installVerbs[tokens[j]] {
-					return true
-				}
-				if !strings.HasPrefix(tokens[j], "-") {
-					break
-				}
-			}
+		if hasActiveCommandSubstitution(tokens[i]) && dynamicCommandPositionLooksInstallLike(tokens[i+1:]) {
+			return true
 		}
 
 		// PM binary found — check for install verb
@@ -549,6 +542,33 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 		for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
 			i++
 		}
+	}
+	return false
+}
+
+func dynamicCommandPositionLooksInstallLike(rest []string) bool {
+	for i := 0; i < len(rest); i++ {
+		tok := rest[i]
+		if shellOperators[tok] {
+			return false
+		}
+		if installVerbs[tok] {
+			return true
+		}
+		if strings.HasPrefix(tok, "-") {
+			// A command-position substitution can synthesize the package-manager
+			// binary and optional pre-action flags. Because the PM is unknown at
+			// parse time, conservatively skip a separate flag value so forms like
+			// `$(printf npm) --prefix app install leftpad` fail closed.
+			if i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "-") && !installVerbs[rest[i+1]] && !shellOperators[rest[i+1]] {
+				i++
+			}
+			continue
+		}
+		// Dynamic command position with trailing argv can synthesize the whole
+		// PM+action (`$(printf 'npm install') leftpad`). Treat it as suspicious
+		// so callers fail closed instead of silently allowing it.
+		return true
 	}
 	return false
 }

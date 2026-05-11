@@ -495,12 +495,28 @@ func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
 }
 
 func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) {
-	results := ParseAll("$(printf npm) install leftpad")
-	if len(results) != 1 {
-		t.Fatalf("ParseAll returned %d commands, want suspicious synthesized install: %#v", len(results), results)
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"dynamic package-manager", "$(printf npm) install leftpad"},
+		{"dynamic package-manager with separate-value flag", "$(printf npm) --prefix app install leftpad"},
+		{"dynamic package-manager and action", "$(printf 'npm install') leftpad"},
 	}
-	if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
-		t.Fatalf("parsed command = %#v, want suspicious unparsed npm install", results[0])
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 1 {
+				t.Fatalf("ParseAll returned %d commands, want suspicious synthesized install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+				t.Fatalf("parsed command = %#v, want suspicious unparsed npm install", results[0])
+			}
+			if !LooksLikeInstall(tt.command) {
+				t.Fatalf("LooksLikeInstall(%q) = false, want true", tt.command)
+			}
+		})
 	}
 }
 
