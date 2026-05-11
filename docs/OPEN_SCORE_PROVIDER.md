@@ -5,23 +5,23 @@ Audience: attach-guard maintainers, Attach Open Score implementers, policy autho
 
 ## Goal
 
-attach-guard should treat Attach Open Score as the first-party default scoring direction while keeping proprietary providers, including Socket, as bring-your-own-token local integrations unless an explicit partnership permits broader hosted/default use.
+attach-guard should treat Attach Open Score as the first-party scoring direction. Proprietary providers, including Socket, remain explicit BYO-token local integrations unless a future written partnership and policy permit broader hosted/default use.
 
-This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer and an opt-in `open-score` HTTP provider. Socket remains the default provider.
+This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer and an opt-in `open-score` HTTP provider for configured Attach Open Score-compatible verdict endpoints. No hosted/default Attach Open Score endpoint is baked into defaults.
 
 For local dogfooding of the current verdict-semantics path, see [Local Attach Open Score dogfood guide](LOCAL_OPEN_SCORE_DOGFOOD.md).
 
 ## Source and licensing posture
 
-Allowed default Attach Open Score inputs are public, open, or otherwise terms-permitted sources with attribution and source references, including OSV, GitHub Advisory Database, deps.dev, OpenSSF Scorecard, public registry metadata, and package artifacts where allowed by each source's license/terms.
+Allowed first-party Attach Open Score inputs are public, open, or otherwise terms-permitted sources with attribution and source references, including OSV, GitHub Advisory Database, deps.dev, OpenSSF Scorecard, public registry metadata, and package artifacts where allowed by each source's license/terms.
 
 Forbidden for default or hosted Attach scoring unless explicitly reviewed and permitted:
 
 - copying, scraping, reselling, or redistributing Socket/Snyk/Aikido/Sonatype/Endor scores or vendor data
 - using proprietary vendor scores as calibration labels, training data, fixtures, public examples, or threshold targets
-- exposing a paid API that behaves like a raw upstream dataset redistribution service
+- exposing an API that behaves like a raw upstream dataset redistribution service
 
-Socket can remain useful as a local BYO-token provider, but it must not be framed as the default Attach scoring source.
+Socket can remain useful as an explicit local BYO-token provider, but it must not be framed as the default Attach scoring source.
 
 ## Decision mapping
 
@@ -49,7 +49,7 @@ type ProviderVerdict struct {
 }
 ```
 
-Policy consumes `ProviderVerdict` directly when providers attach it to `VersionInfo`. Legacy Socket score thresholds remain provider-specific signals, not the generic contract for Open Score.
+Policy consumes `ProviderVerdict` directly when providers attach it to `VersionInfo`. Legacy local Socket score thresholds remain provider-specific signals, not the generic contract for Open Score.
 
 Decision precedence should remain conservative:
 
@@ -110,7 +110,7 @@ UNKNOWN verdict      → DENY or policy failure
 
 ## Config direction
 
-Current config supports a single provider kind and an environment override. The default remains Socket:
+Current config supports a single provider kind and an environment override. The legacy code default remains the local BYO-token Socket provider for compatibility; do not describe that as hosted/default Attach scoring:
 
 ```yaml
 provider:
@@ -139,7 +139,7 @@ policy:
 
 The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, `reasons`, and `source_refs`. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 HTTP provider path.
 
-Socket provider docs should show explicit opt-in:
+Socket provider docs must keep this in advanced/local BYO-token context and show explicit configuration:
 
 ```yaml
 provider:
