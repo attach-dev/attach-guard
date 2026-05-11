@@ -232,18 +232,9 @@ func openScoreHandlerClient(handler http.Handler) *http.Client {
 	return &http.Client{
 		Timeout: time.Second,
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			responses := make(chan *http.Response, 1)
-			go func() {
-				recorder := httptest.NewRecorder()
-				handler.ServeHTTP(recorder, req)
-				responses <- recorder.Result()
-			}()
-			select {
-			case resp := <-responses:
-				return resp, nil
-			case <-req.Context().Done():
-				return nil, req.Context().Err()
-			}
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, req)
+			return recorder.Result(), nil
 		}),
 	}
 }
