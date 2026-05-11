@@ -494,6 +494,16 @@ func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
 	}
 }
 
+func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) {
+	results := ParseAll("$(printf npm) install leftpad")
+	if len(results) != 1 {
+		t.Fatalf("ParseAll returned %d commands, want suspicious synthesized install: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+		t.Fatalf("parsed command = %#v, want suspicious unparsed npm install", results[0])
+	}
+}
+
 func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {
 	if !LooksLikeInstall("echo $(some-wrapper npm install evil-pkg)") {
 		t.Fatal("LooksLikeInstall returned false for install hidden inside command substitution")

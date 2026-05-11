@@ -86,6 +86,7 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 
 	var results []*api.ParsedCommand
 	results = append(results, parseCommandSubstitutionsAll(tokens, rawCommand, substitutionDepth)...)
+	originalTokens := tokens
 
 	prepared := prepareParserTokens(tokens)
 	if len(prepared.tokens) == 0 {
@@ -119,7 +120,19 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 	}
+	if len(results) == 0 && tokensContainActiveCommandSubstitution(originalTokens) && looksLikeInstallTokens(originalTokens, substitutionDepth) {
+		results = append(results, suspiciousUnparsedInstall(strings.Join(originalTokens, " "), rawCommand))
+	}
 	return results
+}
+
+func tokensContainActiveCommandSubstitution(tokens []string) bool {
+	for _, tok := range tokens {
+		if hasActiveCommandSubstitution(tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseAll returns all install commands found across all command segments.
@@ -380,6 +393,17 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 	i := 0
 	for i < len(tokens) {
 		base := filepath.Base(tokens[i])
+
+		if hasActiveCommandSubstitution(tokens[i]) {
+			for j := i + 1; j < len(tokens); j++ {
+				if installVerbs[tokens[j]] {
+					return true
+				}
+				if !strings.HasPrefix(tokens[j], "-") {
+					break
+				}
+			}
+		}
 
 		// PM binary found — check for install verb
 		if pmBinaries[base] {
