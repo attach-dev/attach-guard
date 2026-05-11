@@ -151,10 +151,38 @@ func parseCommandSubstitutionsAll(tokens []string, rawCommand string, substituti
 	var results []*api.ParsedCommand
 	for _, tok := range tokens {
 		for _, inner := range activeCommandSubstitutions(tok) {
-			results = append(results, parseAllWithDepth(inner, rawCommand, substitutionDepth+1)...)
+			innerResults := parseAllWithDepth(inner, rawCommand, substitutionDepth+1)
+			if len(innerResults) == 0 && looksLikeInstallWithDepth(inner, substitutionDepth+1) {
+				innerResults = append(innerResults, suspiciousUnparsedInstall(inner, rawCommand))
+			}
+			results = append(results, innerResults...)
 		}
 	}
 	return results
+}
+
+func suspiciousUnparsedInstall(inner string, rawCommand string) *api.ParsedCommand {
+	return &api.ParsedCommand{
+		PackageManager:          suspiciousPackageManager(inner),
+		Action:                  "install",
+		HasUnparsedArgs:         true,
+		HasNonLocalUnparsedArgs: true,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+	}
+}
+
+func suspiciousPackageManager(rawCommand string) string {
+	for _, segment := range commandSegments(tokenizeForParse(rawCommand)) {
+		stripped := stripRedirectionTokens(segment)
+		for _, tok := range stripped.tokens {
+			base := filepath.Base(tok)
+			if pmBinaries[base] {
+				return base
+			}
+		}
+	}
+	return "npm"
 }
 
 func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int) bool {

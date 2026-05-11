@@ -481,6 +481,19 @@ func TestParseAll_CommandSubstitutionInPreActionFlagPreservesOuterInstall(t *tes
 	}
 }
 
+func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
+	results := ParseAll("FOO=$(strace npm install evil-pkg) npm install safe-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want suspicious substitution plus outer install: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+		t.Fatalf("first parsed command = %#v, want suspicious unparsed npm install", results[0])
+	}
+	if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+	}
+}
+
 func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {
 	if !LooksLikeInstall("echo $(some-wrapper npm install evil-pkg)") {
 		t.Fatal("LooksLikeInstall returned false for install hidden inside command substitution")
