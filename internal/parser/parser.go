@@ -49,8 +49,9 @@ func (c sourceOverrideContext) merge(other sourceOverrideContext) sourceOverride
 }
 
 type unwrapResult struct {
-	tokens []string
-	source sourceOverrideContext
+	tokens    []string
+	source    sourceOverrideContext
+	discarded []string
 }
 
 const maxCommandSubstitutionDepth = 4
@@ -65,10 +66,12 @@ func parseSegmentAll(tokens []string, rawCommand string) []*api.ParsedCommand {
 
 func parseSegmentAllWithContext(tokens []string, rawCommand string, inherited sourceOverrideContext, substitutionDepth int) []*api.ParsedCommand {
 	unwrapped := unwrapPrefixes(tokens)
+	results := parseCommandSubstitutionsAll(unwrapped.discarded, rawCommand, substitutionDepth)
 	if len(unwrapped.tokens) == 0 {
-		return nil
+		return results
 	}
-	return parseUnwrappedTokensAll(unwrapped.tokens, rawCommand, inherited.merge(unwrapped.source), substitutionDepth)
+	results = append(results, parseUnwrappedTokensAll(unwrapped.tokens, rawCommand, inherited.merge(unwrapped.source), substitutionDepth)...)
+	return results
 }
 
 func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourceOverrideContext, substitutionDepth int) []*api.ParsedCommand {
@@ -515,14 +518,14 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 
 		// sudo — skip it (and optional -E, -u user, etc.)
 		if base == "sudo" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// Skip sudo flags
 			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
 				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+				result.discardLeading(1)
 				// -u takes a following argument
 				if (flag == "-u" || flag == "--user") && len(result.tokens) > 0 {
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 				}
 			}
 			continue
@@ -530,29 +533,29 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 
 		// env — skip it and any env flags / VAR=val assignments
 		if base == "env" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// Skip env flags and VAR=val pairs. -S/--split-string retokenizes its
 			// argument because env will split that string into argv before exec.
 			for len(result.tokens) > 0 {
 				if strings.HasPrefix(result.tokens[0], "-") {
 					flag := result.tokens[0]
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 					if isEnvSplitStringFlag(flag) {
 						if len(result.tokens) == 0 {
-							return unwrapResult{}
+							return result
 						}
 						inner := tokenizeForParse(result.tokens[0])
 						result.tokens = append(inner, result.tokens[1:]...)
 						continue
 					}
 					if envFlagTakesValue(flag) && len(result.tokens) > 0 {
-						result.tokens = result.tokens[1:]
+						result.discardLeading(1)
 					}
 					continue
 				}
 				if isEnvVarAssignment(result.tokens[0]) {
 					recordSourceEnvAssignment(result.tokens[0], &result.source)
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 					continue
 				}
 				break
@@ -565,14 +568,16 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		// are not transparent wrappers and must not expose trailing arguments.
 		if base == "bash" || base == "sh" || base == "zsh" {
 			saved := result.tokens // preserve in case we can't find -c
-			result.tokens = result.tokens[1:]
+			rest := result.tokens[1:]
+			discardPrefixLen := 1
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
 			// Shell flags that take a separate value (-o, -O, --rcfile, etc.) must
 			// consume that value to avoid mistaking it for a script filename.
 			foundC := false
-			for len(result.tokens) > 0 {
-				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+			for len(rest) > 0 {
+				flag := rest[0]
+				rest = rest[1:]
+				discardPrefixLen++
 				if flag == "-c" {
 					foundC = true
 					break
@@ -585,8 +590,9 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				}
 				// Flags that take a value must consume the next token.
 				if shellFlagTakesValue(flag) {
-					if len(result.tokens) > 0 {
-						result.tokens = result.tokens[1:]
+					if len(rest) > 0 {
+						rest = rest[1:]
+						discardPrefixLen++
 					}
 					continue
 				}
@@ -601,13 +607,15 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				result.tokens = saved
 				return result
 			}
-			if foundC && len(result.tokens) > 0 {
+			if foundC && len(rest) > 0 {
 				// The next token is the command string; re-tokenize it.
 				// Any tokens after the command string are positional args
 				// ($0, $1, ...) for the shell, NOT commands — discard them.
 				// The caller (parseSegment) handles splitting at shell
 				// operators inside the expanded -c string.
-				inner := tokenizeForParse(result.tokens[0])
+				result.discarded = append(result.discarded, saved[:discardPrefixLen]...)
+				result.discarded = append(result.discarded, rest[1:]...)
+				inner := tokenizeForParse(rest[0])
 				result.tokens = inner
 				continue
 			}
@@ -621,28 +629,31 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		if base == "uv" {
 			if rest, ok := unwrapUVPipTokens(result.tokens); ok {
 				// Strip "uv", leaving ["pip", "install", ...] for the pip parser.
+				result.discarded = append(result.discarded, result.tokens[:len(result.tokens)-len(rest)]...)
 				result.tokens = rest
 				continue
 			}
 			// Not "uv pip ..." — not guarded, stop unwrapping
-			return unwrapResult{}
+			result.tokens = nil
+			return result
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags
 		if base == "command" || base == "time" || base == "nice" || base == "npx" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// "command -v" is introspection (like `which`), not execution.
 			// Return empty to prevent the remaining tokens from being parsed.
 			if base == "command" && len(result.tokens) > 0 && (result.tokens[0] == "-v" || result.tokens[0] == "-V") {
-				return unwrapResult{}
+				result.tokens = nil
+				return result
 			}
 			// Skip flags (e.g., "nice -n 10", "npx --yes")
 			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
 				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+				result.discardLeading(1)
 				// nice -n takes a value; npx --package takes a value
 				if (flag == "-n" || flag == "--package" || flag == "-p") && len(result.tokens) > 0 {
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 				}
 			}
 			continue
@@ -651,7 +662,7 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		// Inline env-var assignment (e.g., NODE_ENV=production npm install axios)
 		if strings.Contains(tok, "=") && !strings.HasPrefix(tok, "-") && isEnvVarAssignment(tok) {
 			recordSourceEnvAssignment(tok, &result.source)
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			continue
 		}
 
@@ -659,6 +670,17 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		break
 	}
 	return result
+}
+
+func (r *unwrapResult) discardLeading(n int) {
+	if n <= 0 {
+		return
+	}
+	if n > len(r.tokens) {
+		n = len(r.tokens)
+	}
+	r.discarded = append(r.discarded, r.tokens[:n]...)
+	r.tokens = r.tokens[n:]
 }
 
 // isEnvVarAssignment returns true if tok looks like KEY=value where KEY is a

@@ -7,6 +7,11 @@ const (
 	activeCommandSubstitutionSuffix = ")\x1e"
 )
 
+type pendingHereDoc struct {
+	delimiter string
+	stripTabs bool
+}
+
 // Tokenize splits a command string into tokens, respecting basic quoting.
 // Shell operators (&&, ||, ;, |), redirections, and newlines are emitted as
 // separate tokens even when not surrounded by whitespace, so
@@ -25,11 +30,23 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 	inSingle := false
 	inDouble := false
 	escaped := false
+	expectHereDocDelimiter := false
+	nextHereDocStripTabs := false
+	var pendingHereDocs []pendingHereDoc
 	runes := []rune(cmd)
 
 	flush := func() {
 		if current.Len() > 0 {
-			tokens = append(tokens, current.String())
+			tok := current.String()
+			tokens = append(tokens, tok)
+			if expectHereDocDelimiter {
+				pendingHereDocs = append(pendingHereDocs, pendingHereDoc{
+					delimiter: tok,
+					stripTabs: nextHereDocStripTabs,
+				})
+				expectHereDocDelimiter = false
+				nextHereDocStripTabs = false
+			}
 			current.Reset()
 		}
 	}
@@ -79,6 +96,10 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 			// Newline is a command separator in shell, like ;
 			flush()
 			tokens = append(tokens, ";")
+			if len(pendingHereDocs) > 0 {
+				i = skipHereDocBodies(runes, i+1, pendingHereDocs)
+				pendingHereDocs = nil
+			}
 
 		case r == ';':
 			flush()
@@ -120,13 +141,22 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 				fd := current.String()
 				current.Reset()
 				op, end := readRedirectionOperator(runes, i)
-				tokens = append(tokens, fd+op)
+				opToken := fd + op
+				tokens = append(tokens, opToken)
+				if stripTabs, ok := hereDocOperator(opToken); ok {
+					expectHereDocDelimiter = true
+					nextHereDocStripTabs = stripTabs
+				}
 				i = end
 				continue
 			}
 			flush()
 			op, end := readRedirectionOperator(runes, i)
 			tokens = append(tokens, op)
+			if stripTabs, ok := hereDocOperator(op); ok {
+				expectHereDocDelimiter = true
+				nextHereDocStripTabs = stripTabs
+			}
 			i = end
 
 		default:
@@ -136,6 +166,50 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 
 	flush()
 	return tokens
+}
+
+func skipHereDocBodies(runes []rune, start int, docs []pendingHereDoc) int {
+	pos := start
+	for _, doc := range docs {
+		for pos < len(runes) {
+			lineStart := pos
+			lineEnd := lineStart
+			for lineEnd < len(runes) && runes[lineEnd] != '\n' {
+				lineEnd++
+			}
+
+			line := string(runes[lineStart:lineEnd])
+			compareLine := line
+			if doc.stripTabs {
+				compareLine = strings.TrimLeft(compareLine, "\t")
+			}
+			if compareLine == doc.delimiter {
+				if lineEnd < len(runes) && runes[lineEnd] == '\n' {
+					pos = lineEnd + 1
+				} else {
+					pos = lineEnd
+				}
+				break
+			}
+
+			if lineEnd >= len(runes) {
+				return len(runes)
+			}
+			pos = lineEnd + 1
+		}
+	}
+	return pos - 1
+}
+
+func hereDocOperator(tok string) (stripTabs bool, ok bool) {
+	switch trimRedirectionFD(tok) {
+	case "<<":
+		return false, true
+	case "<<-":
+		return true, true
+	default:
+		return false, false
+	}
 }
 
 func scanCommandSubstitution(runes []rune, start int) (end int, inner string, ok bool) {
@@ -203,6 +277,9 @@ func readRedirectionOperator(runes []rune, start int) (op string, end int) {
 			case '<':
 				if start+2 < len(runes) && runes[start+2] == '<' {
 					return "<<<", start + 2
+				}
+				if start+2 < len(runes) && runes[start+2] == '-' {
+					return "<<-", start + 2
 				}
 				return "<<", start + 1
 			case '&', '>':

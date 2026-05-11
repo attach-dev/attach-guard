@@ -65,7 +65,7 @@ func isRedirectionOperator(tok string) bool {
 	}
 	op := trimRedirectionFD(tok)
 	switch op {
-	case ">", ">>", ">|", ">&", "<", "<<", "<<<", "<&", "<>", "&>", "&>>":
+	case ">", ">>", ">|", ">&", "<", "<<", "<<-", "<<<", "<&", "<>", "&>", "&>>":
 		return true
 	default:
 		return false

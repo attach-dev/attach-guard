@@ -31,6 +31,7 @@ func TestTokenize(t *testing.T) {
 		{"npm install axios 2>&1", []string{"npm", "install", "axios", "2>&", "1"}},
 		{"npm install axios &>combined.log", []string{"npm", "install", "axios", "&>", "combined.log"}},
 		{"npm install < packages.txt", []string{"npm", "install", "<", "packages.txt"}},
+		{"cat <<EOF\nnpm install phantom\nEOF\npnpm add real", []string{"cat", "<<", "EOF", ";", "pnpm", "add", "real"}},
 		// Command substitutions are kept as one token so inner spaces/operators
 		// do not become outer argv or command separators.
 		{"npm install $(echo axios)", []string{"npm", "install", "$(echo axios)"}},
@@ -298,6 +299,57 @@ func TestParseAll_RedirectionsAcrossChainedSegments(t *testing.T) {
 	}
 }
 
+func TestParseAll_HereDocBodiesAreData(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+		wantPkg string
+	}{
+		{
+			name:    "plain heredoc body is not a command",
+			command: "cat <<EOF\nnpm install phantom\nEOF",
+		},
+		{
+			name:    "install command with heredoc keeps only command argv",
+			command: "npm install safe-pkg <<EOF\nnpm install phantom\nEOF",
+			wantPM:  "npm",
+			wantPkg: "safe-pkg",
+		},
+		{
+			name:    "command after heredoc delimiter is still parsed",
+			command: "cat <<EOF\nnpm install phantom\nEOF\npnpm add real-pkg",
+			wantPM:  "pnpm",
+			wantPkg: "real-pkg",
+		},
+		{
+			name:    "tab-stripping heredoc body is not a command",
+			command: "cat <<-EOF\n\tnpm install phantom\n\tEOF",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if tt.wantPM == "" {
+				if len(results) != 0 {
+					t.Fatalf("ParseAll(%q) returned %#v, want no install commands", tt.command, results)
+				}
+				if LooksLikeInstall(tt.command) {
+					t.Fatalf("LooksLikeInstall(%q) = true, want false", tt.command)
+				}
+				return
+			}
+			if len(results) != 1 {
+				t.Fatalf("ParseAll(%q) returned %d commands, want 1", tt.command, len(results))
+			}
+			if results[0].PackageManager != tt.wantPM || len(results[0].Packages) != 1 || results[0].Packages[0].Name != tt.wantPkg {
+				t.Fatalf("parsed command = %#v, want %s install %s", results[0], tt.wantPM, tt.wantPkg)
+			}
+		})
+	}
+}
+
 func TestParse_CommandSubstitutionDynamicArgsNotPackages(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -325,6 +377,41 @@ func TestParse_CommandSubstitutionDynamicArgsNotPackages(t *testing.T) {
 			}
 			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
 				t.Fatalf("unparsed flags = (%v, %v), want both true", result.HasUnparsedArgs, result.HasNonLocalUnparsedArgs)
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionInDiscardedPrefixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "inline env assignment",
+			command: "FOO=$(npm install evil-pkg) npm install safe-pkg",
+		},
+		{
+			name:    "sudo user argument",
+			command: "sudo -u $(npm install evil-pkg) npm install safe-pkg",
+		},
+		{
+			name:    "shell positional argument",
+			command: `bash -c 'npm install safe-pkg' "$(npm install evil-pkg)"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll(%q) returned %d commands, want 2: %#v", tt.command, len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want discarded-prefix npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want retained npm install safe-pkg", results[1])
 			}
 		})
 	}
