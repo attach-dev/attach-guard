@@ -133,10 +133,6 @@ func tokenize(cmd string, markActiveCommandSubstitutions bool) []string {
 			}
 
 		case r == '>' || r == '<':
-			if current.Len() > 0 && i+1 < len(runes) && (runes[i+1] == '=' || isDigit(runes[i+1])) {
-				current.WriteRune(r)
-				continue
-			}
 			if isDigits(current.String()) {
 				fd := current.String()
 				current.Reset()

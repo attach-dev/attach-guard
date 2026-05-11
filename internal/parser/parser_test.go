@@ -26,6 +26,8 @@ func TestTokenize(t *testing.T) {
 		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
 		// Redirections without spaces
 		{"npm install axios>install.log", []string{"npm", "install", "axios", ">", "install.log"}},
+		{"npm install axios>2", []string{"npm", "install", "axios", ">", "2"}},
+		{"npm install axios>=2", []string{"npm", "install", "axios", ">", "=2"}},
 		{"npm install axios >> install.log", []string{"npm", "install", "axios", ">>", "install.log"}},
 		{"npm install axios 2>err.log", []string{"npm", "install", "axios", "2>", "err.log"}},
 		{"npm install axios 2>&1", []string{"npm", "install", "axios", "2>&", "1"}},
@@ -686,7 +688,7 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
 		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, true},
 		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
-		{"pip greater-than range deferred", "pip install requests>2.0", "pip", 0, "", "", false, true, true},
+		{"pip greater-than shell redirection", "pip install requests>2.0", "pip", 1, "requests", "", false, true, false},
 		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
 		{"pip inline file index env deferred", "PIP_INDEX_URL=file:///tmp/simple pip install requests", "pip", 0, "", "", false, true, true},
 		{"pip inline local find links env", "PIP_FIND_LINKS=./dist pip install flask", "pip", 0, "", "", false, true, true},

@@ -530,7 +530,7 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		"pip install -r requirements.txt",
 		"pip install https://github.com/user/repo/archive/main.tar.gz",
 		"pip install git+https://github.com/user/repo.git",
-		"pip install requests>=2.0",
+		"pip install 'requests>=2.0'",
 		"pip install requests[security]",
 		"pip install requests --index-url https://custom.pypi.org/simple",
 		"pip install requests --index-url=https://custom.pypi.org/simple",
@@ -690,7 +690,7 @@ func TestEvaluate_MixedNonLocalAndParsedArgsForceAsk(t *testing.T) {
 	})
 
 	eval := NewEvaluator(cfg, mock)
-	result, err := eval.Evaluate(context.Background(), "pip install flask requests>=2.0", api.ModeShell)
+	result, err := eval.Evaluate(context.Background(), "pip install flask 'requests>=2.0'", api.ModeShell)
 	if err != nil {
 		t.Fatal(err)
 	}
