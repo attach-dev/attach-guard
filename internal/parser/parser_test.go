@@ -24,6 +24,21 @@ func TestTokenize(t *testing.T) {
 		{"ls|npm install axios", []string{"ls", "|", "npm", "install", "axios"}},
 		// Newlines as command separators
 		{"echo hello\nnpm install axios", []string{"echo", "hello", ";", "npm", "install", "axios"}},
+		// Redirections without spaces
+		{"npm install axios>install.log", []string{"npm", "install", "axios", ">", "install.log"}},
+		{"npm install axios>2", []string{"npm", "install", "axios", ">", "2"}},
+		{"npm install axios>=2", []string{"npm", "install", "axios", ">", "=2"}},
+		{"npm install axios >> install.log", []string{"npm", "install", "axios", ">>", "install.log"}},
+		{"npm install axios 2>err.log", []string{"npm", "install", "axios", "2>", "err.log"}},
+		{"npm install axios 2>&1", []string{"npm", "install", "axios", "2>&", "1"}},
+		{"npm install axios &>combined.log", []string{"npm", "install", "axios", "&>", "combined.log"}},
+		{"npm install < packages.txt", []string{"npm", "install", "<", "packages.txt"}},
+		{"cat <<EOF\nnpm install phantom\nEOF\npnpm add real", []string{"cat", "<<", "EOF", ";", "pnpm", "add", "real"}},
+		// Command substitutions are kept as one token so inner spaces/operators
+		// do not become outer argv or command separators.
+		{"npm install $(echo axios)", []string{"npm", "install", "$(echo axios)"}},
+		{"echo $(npm install axios)&&pnpm add zod", []string{"echo", "$(npm install axios)", "&&", "pnpm", "add", "zod"}},
+		{"echo `npm install axios`&&pnpm add zod", []string{"echo", "`npm install axios`", "&&", "pnpm", "add", "zod"}},
 		// Operators inside quotes should NOT be split
 		{`echo "a&&b"`, []string{"echo", "a&&b"}},
 		{`echo 'a;b'`, []string{"echo", "a;b"}},
@@ -230,6 +245,356 @@ func TestParse_ShellOperators_NotPackageNames(t *testing.T) {
 		if pkg.Name == "&&" || pkg.Name == "npm" || pkg.Name == "install" || pkg.Name == "lodash" {
 			t.Errorf("shell operator or second command token %q should not be a package name", pkg.Name)
 		}
+	}
+}
+
+func TestParse_RedirectionsNotPackageNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+		wantPkg string
+	}{
+		{"npm stdout spaced", "npm install axios > install.log", "npm", "axios"},
+		{"npm stdout attached", "npm install axios>install.log", "npm", "axios"},
+		{"pnpm stderr fd", "pnpm add react 2>err.log", "pnpm", "react"},
+		{"pip stdin", "pip install requests < packages.txt", "pip", "requests"},
+		{"go append stdout", "go get golang.org/x/net >>install.log", "go", "golang.org/x/net"},
+		{"cargo fd duplicate", "cargo add serde 2>&1", "cargo", "serde"},
+		{"leading redirection", "2>err.log npm install lodash", "npm", "lodash"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("PackageManager = %q, want %q", result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != 1 || result.Packages[0].Name != tt.wantPkg {
+				t.Fatalf("Packages = %#v, want one package %q", result.Packages, tt.wantPkg)
+			}
+			if !result.HasUnparsedArgs {
+				t.Fatalf("HasUnparsedArgs = false, want true so redirection is not rewritten away")
+			}
+			for _, pkg := range result.Packages {
+				switch pkg.Name {
+				case ">", ">>", "<", "2>", "2>&", "&>", "install.log", "err.log", "packages.txt", "1":
+					t.Fatalf("redirection token/target %q should not be a package", pkg.Name)
+				}
+			}
+		})
+	}
+}
+
+func TestParseAll_RedirectionsAcrossChainedSegments(t *testing.T) {
+	results := ParseAll("npm install axios > npm.log && pnpm add react 2>pnpm.err")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "axios" {
+		t.Fatalf("first parsed command = %#v, want npm install axios", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "react" {
+		t.Fatalf("second parsed command = %#v, want pnpm add react", results[1])
+	}
+}
+
+func TestParseAll_HereDocBodiesAreData(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+		wantPkg string
+	}{
+		{
+			name:    "plain heredoc body is not a command",
+			command: "cat <<EOF\nnpm install phantom\nEOF",
+		},
+		{
+			name:    "install command with heredoc keeps only command argv",
+			command: "npm install safe-pkg <<EOF\nnpm install phantom\nEOF",
+			wantPM:  "npm",
+			wantPkg: "safe-pkg",
+		},
+		{
+			name:    "command after heredoc delimiter is still parsed",
+			command: "cat <<EOF\nnpm install phantom\nEOF\npnpm add real-pkg",
+			wantPM:  "pnpm",
+			wantPkg: "real-pkg",
+		},
+		{
+			name:    "tab-stripping heredoc body is not a command",
+			command: "cat <<-EOF\n\tnpm install phantom\n\tEOF",
+		},
+		{
+			name:    "quoted heredoc delimiter suppresses command substitutions",
+			command: "cat <<'EOF'\n$(npm install literal-pkg)\nEOF",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if tt.wantPM == "" {
+				if len(results) != 0 {
+					t.Fatalf("ParseAll(%q) returned %#v, want no install commands", tt.command, results)
+				}
+				if LooksLikeInstall(tt.command) {
+					t.Fatalf("LooksLikeInstall(%q) = true, want false", tt.command)
+				}
+				return
+			}
+			if len(results) != 1 {
+				t.Fatalf("ParseAll(%q) returned %d commands, want 1", tt.command, len(results))
+			}
+			if results[0].PackageManager != tt.wantPM || len(results[0].Packages) != 1 || results[0].Packages[0].Name != tt.wantPkg {
+				t.Fatalf("parsed command = %#v, want %s install %s", results[0], tt.wantPM, tt.wantPkg)
+			}
+		})
+	}
+}
+
+func TestParse_CommandSubstitutionDynamicArgsNotPackages(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		wantPM  string
+	}{
+		{"npm", "npm install $(echo axios)", "npm"},
+		{"pnpm", "pnpm add $(printf react)", "pnpm"},
+		{"pip", "pip install $(echo requests)", "pip"},
+		{"go", "go get $(echo golang.org/x/net)", "go"},
+		{"cargo", "cargo add $(echo serde)", "cargo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != tt.wantPM {
+				t.Fatalf("PackageManager = %q, want %q", result.PackageManager, tt.wantPM)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("Packages = %#v, want none for dynamic command-substitution args", result.Packages)
+			}
+			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
+				t.Fatalf("unparsed flags = (%v, %v), want both true", result.HasUnparsedArgs, result.HasNonLocalUnparsedArgs)
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionInDiscardedPrefixes(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{
+			name:    "inline env assignment",
+			command: "FOO=$(npm install evil-pkg) npm install safe-pkg",
+		},
+		{
+			name:    "sudo user argument",
+			command: "sudo -u $(npm install evil-pkg) npm install safe-pkg",
+		},
+		{
+			name:    "shell positional argument",
+			command: `bash -c 'npm install safe-pkg' "$(npm install evil-pkg)"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll(%q) returned %d commands, want 2: %#v", tt.command, len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want discarded-prefix npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want retained npm install safe-pkg", results[1])
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionCapturesNestedInstall(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"dollar parens", "echo $(npm install evil-pkg) && pnpm add safe-pkg"},
+		{"backticks", "echo `npm install evil-pkg` && pnpm add safe-pkg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll returned %d commands, want 2", len(results))
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want nested npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want pnpm add safe-pkg", results[1])
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionInsideUnquotedHereDoc(t *testing.T) {
+	results := ParseAll("cat <<EOF\n$(npm install evil-pkg)\nEOF")
+	if len(results) != 1 {
+		t.Fatalf("ParseAll returned %d commands, want 1: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("parsed command = %#v, want heredoc substitution npm install evil-pkg", results[0])
+	}
+	if !LooksLikeInstall("cat <<EOF\n$(npm install evil-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for install hidden inside unquoted heredoc substitution")
+	}
+	if LooksLikeInstall("cat <<EOF\n\\$(npm install escaped-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned true for escaped heredoc substitution")
+	}
+	if !LooksLikeInstall("cat <<EOF\n\\\\$(npm install even-backslash-pkg)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for heredoc substitution after even backslashes")
+	}
+	if !LooksLikeInstall("cat <<EOF\n`npm install backtick-pkg`\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for backtick install hidden inside unquoted heredoc")
+	}
+	if !LooksLikeInstall("cat <<EOF\n$(\nnpm install multiline-pkg\n)\nEOF") {
+		t.Fatal("LooksLikeInstall returned false for multiline command substitution inside unquoted heredoc")
+	}
+}
+
+func TestParseAll_CommandSubstitutionInsideUnquotedHereDocWithFollowingCommand(t *testing.T) {
+	results := ParseAll("cat <<EOF\n$(npm install safe-pkg)\nEOF\npnpm add evil-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want heredoc substitution and following command: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want heredoc npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "pnpm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "evil-pkg" {
+		t.Fatalf("second parsed command = %#v, want following pnpm add evil-pkg", results[1])
+	}
+}
+
+func TestParseAll_CommandSubstitutionInPreActionFlagPreservesOuterInstall(t *testing.T) {
+	results := ParseAll("npm --prefix=$(npm install safe-pkg >/dev/null; printf .) install bad-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want inner and outer npm installs: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("first parsed command = %#v, want inner npm install safe-pkg", results[0])
+	}
+	if results[1].PackageManager != "npm" || !results[1].HasNonLocalUnparsedArgs {
+		t.Fatalf("second parsed command = %#v, want outer npm install marked non-local/dynamic", results[1])
+	}
+}
+
+func TestParseAll_SuspiciousSubstitutionDoesNotHideCleanSegment(t *testing.T) {
+	results := ParseAll("FOO=$(strace npm install evil-pkg) npm install safe-pkg")
+	if len(results) != 2 {
+		t.Fatalf("ParseAll returned %d commands, want suspicious substitution plus outer install: %#v", len(results), results)
+	}
+	if results[0].PackageManager != "npm" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+		t.Fatalf("first parsed command = %#v, want suspicious unparsed npm install", results[0])
+	}
+	if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+		t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+	}
+}
+
+func TestParseAll_ProcessSubstitutionCapturesNestedInstall(t *testing.T) {
+	tests := []string{
+		"cat <(npm install evil-pkg)",
+		"cat >(npm install evil-pkg)",
+	}
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			results := ParseAll(cmd)
+			if len(results) != 1 {
+				t.Fatalf("ParseAll returned %d commands, want process-substitution install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("parsed command = %#v, want process-substitution npm install evil-pkg", results[0])
+			}
+			if !LooksLikeInstall(cmd) {
+				t.Fatalf("LooksLikeInstall(%q) = false, want true", cmd)
+			}
+		})
+	}
+}
+
+func TestParseAll_SuppressedWrapperSubstitutionDoesNotHideCleanSegment(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"command introspection", "command -v $(npm install evil-pkg) && npm install safe-pkg"},
+		{"uv non-pip", "uv add $(npm install evil-pkg) && npm install safe-pkg"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 2 {
+				t.Fatalf("ParseAll returned %d commands, want hidden substitution plus outer install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
+				t.Fatalf("first parsed command = %#v, want hidden npm install evil-pkg", results[0])
+			}
+			if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+			}
+		})
+	}
+}
+
+func TestParseAll_CommandSubstitutionAsCommandPositionFailsClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"dynamic package-manager", "$(printf npm) install leftpad"},
+		{"dynamic package-manager with separate-value flag", "$(printf npm) --prefix app install leftpad"},
+		{"dynamic package-manager and action", "$(printf 'npm install') leftpad"},
+		{"dynamic full argv", "$(printf 'npm install leftpad')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := ParseAll(tt.command)
+			if len(results) != 1 {
+				t.Fatalf("ParseAll returned %d commands, want suspicious synthesized install: %#v", len(results), results)
+			}
+			if results[0].PackageManager != "dynamic-shell" || !results[0].HasNonLocalUnparsedArgs || len(results[0].Packages) != 0 {
+				t.Fatalf("parsed command = %#v, want suspicious unparsed dynamic-shell install", results[0])
+			}
+			if !LooksLikeInstall(tt.command) {
+				t.Fatalf("LooksLikeInstall(%q) = false, want true", tt.command)
+			}
+		})
+	}
+}
+
+func TestLooksLikeInstall_CommandSubstitutionWrapperBypass(t *testing.T) {
+	if !LooksLikeInstall("echo $(some-wrapper npm install evil-pkg)") {
+		t.Fatal("LooksLikeInstall returned false for install hidden inside command substitution")
+	}
+	if !LooksLikeInstall("echo $(echo $(echo $(echo $(echo $(npm install depth-limit-pkg)))))") {
+		t.Fatal("LooksLikeInstall returned false for command substitution at depth limit")
+	}
+	if LooksLikeInstall("echo '$(npm install literal-pkg)'") {
+		t.Fatal("LooksLikeInstall returned true for single-quoted literal command substitution")
 	}
 }
 
@@ -480,6 +845,7 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"pip deferred path", "pip install .", "pip", 0, "", "", false, true, false},
 		{"pip local find links deferred", "pip install --find-links ./dist flask", "pip", 0, "", "", false, true, true},
 		{"pip remote vcs deferred", "pip install git+https://github.com/user/repo.git", "pip", 0, "", "", false, true, true},
+		{"pip greater-than shell redirection", "pip install requests>2.0", "pip", 1, "requests", "", false, true, false},
 		{"pip custom index deferred", "pip install requests --index-url https://custom.pypi.org/simple", "pip", 0, "", "", false, true, true},
 		{"pip inline file index env deferred", "PIP_INDEX_URL=file:///tmp/simple pip install requests", "pip", 0, "", "", false, true, true},
 		{"pip inline local find links env", "PIP_FIND_LINKS=./dist pip install flask", "pip", 0, "", "", false, true, true},

@@ -49,59 +49,90 @@ func (c sourceOverrideContext) merge(other sourceOverrideContext) sourceOverride
 }
 
 type unwrapResult struct {
-	tokens []string
-	source sourceOverrideContext
+	tokens    []string
+	source    sourceOverrideContext
+	discarded []string
 }
+
+const maxCommandSubstitutionDepth = 4
 
 // parseSegmentAll parses every install command reachable from a single command
 // segment. After unwrapping prefixes (which may expand shell -c strings
 // containing operators), it re-splits on shell operators and checks each
 // resulting sub-segment.
 func parseSegmentAll(tokens []string, rawCommand string) []*api.ParsedCommand {
-	return parseSegmentAllWithContext(tokens, rawCommand, sourceOverrideContext{})
+	return parseSegmentAllWithContext(tokens, rawCommand, sourceOverrideContext{}, 0)
 }
 
-func parseSegmentAllWithContext(tokens []string, rawCommand string, inherited sourceOverrideContext) []*api.ParsedCommand {
+func parseSegmentAllWithContext(tokens []string, rawCommand string, inherited sourceOverrideContext, substitutionDepth int) []*api.ParsedCommand {
 	unwrapped := unwrapPrefixes(tokens)
+	results := parseCommandSubstitutionsAll(unwrapped.discarded, rawCommand, substitutionDepth)
 	if len(unwrapped.tokens) == 0 {
-		return nil
+		return results
 	}
-	return parseUnwrappedTokensAll(unwrapped.tokens, rawCommand, inherited.merge(unwrapped.source))
+	results = append(results, parseUnwrappedTokensAll(unwrapped.tokens, rawCommand, inherited.merge(unwrapped.source), substitutionDepth)...)
+	return results
 }
 
-func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourceOverrideContext) []*api.ParsedCommand {
+func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourceOverrideContext, substitutionDepth int) []*api.ParsedCommand {
 	segments := commandSegments(tokens)
 	if len(segments) > 1 {
 		var results []*api.ParsedCommand
 		for _, seg := range segments {
-			results = append(results, parseSegmentAllWithContext(seg, rawCommand, inherited)...)
+			results = append(results, parseSegmentAllWithContext(seg, rawCommand, inherited, substitutionDepth)...)
 		}
 		return results
 	}
 
 	var results []*api.ParsedCommand
+	results = append(results, parseCommandSubstitutionsAll(tokens, rawCommand, substitutionDepth)...)
+	originalTokens := tokens
+
+	prepared := prepareParserTokens(tokens)
+	if len(prepared.tokens) == 0 {
+		return results
+	}
+	tokens = prepared.tokens
+
 	if cmd := npm.Parse(tokens, rawCommand); cmd != nil {
+		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 		return results
 	}
 	if cmd := pnpm.Parse(tokens, rawCommand); cmd != nil {
+		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 		return results
 	}
 	if cmd := pip.Parse(tokens, rawCommand); cmd != nil {
 		applySourceOverrideContext(cmd, inherited)
+		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 		return results
 	}
 	if cmd := gomod.Parse(tokens, rawCommand); cmd != nil {
 		applySourceOverrideContext(cmd, inherited)
+		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 		return results
 	}
 	if cmd := cargo.Parse(tokens, rawCommand); cmd != nil {
+		applyShellTokenInfo(cmd, prepared)
 		results = append(results, cmd)
 	}
+	if len(results) == 0 && tokensContainActiveCommandSubstitution(originalTokens) && looksLikeInstallTokens(originalTokens, substitutionDepth) {
+		results = append(results, suspiciousUnparsedInstall(strings.Join(originalTokens, " "), rawCommand))
+	}
 	return results
+}
+
+func tokensContainActiveCommandSubstitution(tokens []string) bool {
+	for _, tok := range tokens {
+		if hasActiveCommandSubstitution(tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseAll returns all install commands found across all command segments.
@@ -109,16 +140,82 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 // chained commands, including commands revealed by wrapper unwrapping such as
 // "bash -c 'npm install lodash && npm install evil-pkg'".
 func ParseAll(rawCommand string) []*api.ParsedCommand {
-	tokens := Tokenize(rawCommand)
+	return parseAllWithDepth(rawCommand, rawCommand, 0)
+}
+
+func parseAllWithDepth(command string, rawCommand string, substitutionDepth int) []*api.ParsedCommand {
+	tokens := tokenizeForParse(command)
 	if len(tokens) == 0 {
 		return nil
 	}
 
 	var results []*api.ParsedCommand
 	for _, segment := range commandSegments(tokens) {
-		results = append(results, parseSegmentAllWithContext(segment, rawCommand, sourceOverrideContext{})...)
+		results = append(results, parseSegmentAllWithContext(segment, rawCommand, sourceOverrideContext{}, substitutionDepth)...)
 	}
 	return results
+}
+
+func parseCommandSubstitutionsAll(tokens []string, rawCommand string, substitutionDepth int) []*api.ParsedCommand {
+	if substitutionDepth >= maxCommandSubstitutionDepth {
+		return nil
+	}
+
+	var results []*api.ParsedCommand
+	for _, tok := range tokens {
+		for _, inner := range activeCommandSubstitutions(tok) {
+			innerResults := parseAllWithDepth(inner, rawCommand, substitutionDepth+1)
+			if len(innerResults) == 0 && looksLikeInstallWithDepth(inner, substitutionDepth+1) {
+				innerResults = append(innerResults, suspiciousUnparsedInstall(inner, rawCommand))
+			}
+			results = append(results, innerResults...)
+		}
+	}
+	return results
+}
+
+func suspiciousUnparsedInstall(inner string, rawCommand string) *api.ParsedCommand {
+	return &api.ParsedCommand{
+		PackageManager:          suspiciousPackageManager(inner),
+		Action:                  "install",
+		HasUnparsedArgs:         true,
+		HasNonLocalUnparsedArgs: true,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+	}
+}
+
+func suspiciousPackageManager(rawCommand string) string {
+	for _, segment := range commandSegments(tokenizeForParse(rawCommand)) {
+		stripped := stripRedirectionTokens(segment)
+		for _, tok := range stripped.tokens {
+			base := filepath.Base(tok)
+			if pmBinaries[base] {
+				return base
+			}
+		}
+	}
+	return "dynamic-shell"
+}
+
+func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int) bool {
+	if substitutionDepth >= maxCommandSubstitutionDepth {
+		for _, tok := range tokens {
+			if hasActiveCommandSubstitution(tok) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, tok := range tokens {
+		for _, inner := range activeCommandSubstitutions(tok) {
+			if looksLikeInstallWithDepth(inner, substitutionDepth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // IsInstallCommand returns true if the raw command is a recognized install-like
@@ -154,14 +251,21 @@ var pmBinaries = map[string]bool{
 //
 // The heuristic requires that a PM binary token appears before an install verb
 // token (i.e., "npm install", not "install npm"), which matches the actual
-// command syntax of npm/pnpm. It only inspects top-level tokens — it does NOT
-// re-tokenize compound tokens (e.g., quoted strings) to avoid false positives
-// on commands like echo "npm install axios". Shell -c forms are already handled
-// by unwrapPrefixes in Parse(), so they don't need a heuristic fallback.
+// command syntax of npm/pnpm. It only re-tokenizes shell execution contexts
+// (shell -c, env -S, and active command substitutions), not arbitrary quoted
+// data, to avoid false positives on commands like echo "npm install axios".
 func LooksLikeInstall(rawCommand string) bool {
-	tokens := Tokenize(rawCommand)
+	return looksLikeInstallWithDepth(rawCommand, 0)
+}
+
+func looksLikeInstallWithDepth(rawCommand string, substitutionDepth int) bool {
+	tokens := tokenizeForParse(rawCommand)
 	for _, segment := range commandSegments(tokens) {
-		if looksLikeInstallTokens(segment) {
+		if commandSubstitutionsLookLikeInstall(segment, substitutionDepth) {
+			return true
+		}
+		stripped := stripRedirectionTokens(segment)
+		if looksLikeInstallTokens(stripped.tokens, substitutionDepth) {
 			return true
 		}
 	}
@@ -285,15 +389,22 @@ func unwrapUVPipTokens(tokens []string) ([]string, bool) {
 // binaries (strace, nohup, etc.) are treated as potential wrappers and skipped.
 // However, after a shell binary (bash/sh/zsh) without -c, remaining tokens are
 // treated as script arguments and NOT scanned for PM commands.
-func looksLikeInstallTokens(tokens []string) bool {
+func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 	i := 0
 	for i < len(tokens) {
 		base := filepath.Base(tokens[i])
+
+		if hasActiveCommandSubstitution(tokens[i]) && dynamicCommandPositionLooksInstallLike(tokens[i+1:]) {
+			return true
+		}
 
 		// PM binary found — check for install verb
 		if pmBinaries[base] {
 			for j := i + 1; j < len(tokens); j++ {
 				if installVerbs[tokens[j]] {
+					return true
+				}
+				if hasActiveCommandSubstitution(tokens[j]) {
 					return true
 				}
 				if !strings.HasPrefix(tokens[j], "-") {
@@ -341,12 +452,7 @@ func looksLikeInstallTokens(tokens []string) bool {
 			// Any tokens after the command string are positional args ($0, $1),
 			// not commands, so stop scanning regardless of the result.
 			if i < len(tokens) {
-				inner := Tokenize(tokens[i])
-				for _, seg := range commandSegments(inner) {
-					if looksLikeInstallTokens(seg) {
-						return true
-					}
-				}
+				return looksLikeInstallWithDepth(tokens[i], substitutionDepth+1)
 			}
 			return false
 		}
@@ -364,9 +470,9 @@ func looksLikeInstallTokens(tokens []string) bool {
 						if i >= len(tokens) {
 							return false
 						}
-						inner := Tokenize(tokens[i])
+						inner := tokenizeForParse(tokens[i])
 						combined := append(inner, tokens[i+1:]...)
-						return looksLikeInstallTokens(combined)
+						return looksLikeInstallTokens(stripRedirectionTokens(combined).tokens, substitutionDepth)
 					}
 					if envFlagTakesValue(tok) && i < len(tokens) {
 						i++
@@ -440,6 +546,36 @@ func looksLikeInstallTokens(tokens []string) bool {
 	return false
 }
 
+func dynamicCommandPositionLooksInstallLike(rest []string) bool {
+	if len(rest) == 0 {
+		return true
+	}
+	for i := 0; i < len(rest); i++ {
+		tok := rest[i]
+		if shellOperators[tok] {
+			return false
+		}
+		if installVerbs[tok] {
+			return true
+		}
+		if strings.HasPrefix(tok, "-") {
+			// A command-position substitution can synthesize the package-manager
+			// binary and optional pre-action flags. Because the PM is unknown at
+			// parse time, conservatively skip a separate flag value so forms like
+			// `$(printf npm) --prefix app install leftpad` fail closed.
+			if i+1 < len(rest) && !strings.HasPrefix(rest[i+1], "-") && !installVerbs[rest[i+1]] && !shellOperators[rest[i+1]] {
+				i++
+			}
+			continue
+		}
+		// Dynamic command position with trailing argv can synthesize the whole
+		// PM+action (`$(printf 'npm install') leftpad`). Treat it as suspicious
+		// so callers fail closed instead of silently allowing it.
+		return true
+	}
+	return false
+}
+
 // transparentWrappers are commands that simply exec their arguments.
 // We strip these (and their flags) to reach the underlying PM command.
 var transparentWrappers = map[string]bool{
@@ -462,14 +598,14 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 
 		// sudo — skip it (and optional -E, -u user, etc.)
 		if base == "sudo" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// Skip sudo flags
 			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
 				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+				result.discardLeading(1)
 				// -u takes a following argument
 				if (flag == "-u" || flag == "--user") && len(result.tokens) > 0 {
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 				}
 			}
 			continue
@@ -477,29 +613,29 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 
 		// env — skip it and any env flags / VAR=val assignments
 		if base == "env" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// Skip env flags and VAR=val pairs. -S/--split-string retokenizes its
 			// argument because env will split that string into argv before exec.
 			for len(result.tokens) > 0 {
 				if strings.HasPrefix(result.tokens[0], "-") {
 					flag := result.tokens[0]
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 					if isEnvSplitStringFlag(flag) {
 						if len(result.tokens) == 0 {
-							return unwrapResult{}
+							return result
 						}
-						inner := Tokenize(result.tokens[0])
+						inner := tokenizeForParse(result.tokens[0])
 						result.tokens = append(inner, result.tokens[1:]...)
 						continue
 					}
 					if envFlagTakesValue(flag) && len(result.tokens) > 0 {
-						result.tokens = result.tokens[1:]
+						result.discardLeading(1)
 					}
 					continue
 				}
 				if isEnvVarAssignment(result.tokens[0]) {
 					recordSourceEnvAssignment(result.tokens[0], &result.source)
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 					continue
 				}
 				break
@@ -512,14 +648,16 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		// are not transparent wrappers and must not expose trailing arguments.
 		if base == "bash" || base == "sh" || base == "zsh" {
 			saved := result.tokens // preserve in case we can't find -c
-			result.tokens = result.tokens[1:]
+			rest := result.tokens[1:]
+			discardPrefixLen := 1
 			// Look for -c flag. It can be standalone (-c) or combined (-lc, -xc).
 			// Shell flags that take a separate value (-o, -O, --rcfile, etc.) must
 			// consume that value to avoid mistaking it for a script filename.
 			foundC := false
-			for len(result.tokens) > 0 {
-				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+			for len(rest) > 0 {
+				flag := rest[0]
+				rest = rest[1:]
+				discardPrefixLen++
 				if flag == "-c" {
 					foundC = true
 					break
@@ -532,8 +670,9 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				}
 				// Flags that take a value must consume the next token.
 				if shellFlagTakesValue(flag) {
-					if len(result.tokens) > 0 {
-						result.tokens = result.tokens[1:]
+					if len(rest) > 0 {
+						rest = rest[1:]
+						discardPrefixLen++
 					}
 					continue
 				}
@@ -548,13 +687,15 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				result.tokens = saved
 				return result
 			}
-			if foundC && len(result.tokens) > 0 {
+			if foundC && len(rest) > 0 {
 				// The next token is the command string; re-tokenize it.
 				// Any tokens after the command string are positional args
 				// ($0, $1, ...) for the shell, NOT commands — discard them.
 				// The caller (parseSegment) handles splitting at shell
 				// operators inside the expanded -c string.
-				inner := Tokenize(result.tokens[0])
+				result.discarded = append(result.discarded, saved[:discardPrefixLen]...)
+				result.discarded = append(result.discarded, rest[1:]...)
+				inner := tokenizeForParse(rest[0])
 				result.tokens = inner
 				continue
 			}
@@ -568,28 +709,34 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		if base == "uv" {
 			if rest, ok := unwrapUVPipTokens(result.tokens); ok {
 				// Strip "uv", leaving ["pip", "install", ...] for the pip parser.
+				result.discarded = append(result.discarded, result.tokens[:len(result.tokens)-len(rest)]...)
 				result.tokens = rest
 				continue
 			}
-			// Not "uv pip ..." — not guarded, stop unwrapping
-			return unwrapResult{}
+			// Not "uv pip ..." — not guarded, stop unwrapping, but preserve
+			// active command substitutions in ignored uv argv for fail-closed checks.
+			result.discarded = append(result.discarded, result.tokens...)
+			result.tokens = nil
+			return result
 		}
 
 		// command, time, nice, npx — skip the wrapper and any leading flags
 		if base == "command" || base == "time" || base == "nice" || base == "npx" {
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			// "command -v" is introspection (like `which`), not execution.
 			// Return empty to prevent the remaining tokens from being parsed.
 			if base == "command" && len(result.tokens) > 0 && (result.tokens[0] == "-v" || result.tokens[0] == "-V") {
-				return unwrapResult{}
+				result.discarded = append(result.discarded, result.tokens...)
+				result.tokens = nil
+				return result
 			}
 			// Skip flags (e.g., "nice -n 10", "npx --yes")
 			for len(result.tokens) > 0 && strings.HasPrefix(result.tokens[0], "-") {
 				flag := result.tokens[0]
-				result.tokens = result.tokens[1:]
+				result.discardLeading(1)
 				// nice -n takes a value; npx --package takes a value
 				if (flag == "-n" || flag == "--package" || flag == "-p") && len(result.tokens) > 0 {
-					result.tokens = result.tokens[1:]
+					result.discardLeading(1)
 				}
 			}
 			continue
@@ -598,7 +745,7 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		// Inline env-var assignment (e.g., NODE_ENV=production npm install axios)
 		if strings.Contains(tok, "=") && !strings.HasPrefix(tok, "-") && isEnvVarAssignment(tok) {
 			recordSourceEnvAssignment(tok, &result.source)
-			result.tokens = result.tokens[1:]
+			result.discardLeading(1)
 			continue
 		}
 
@@ -606,6 +753,17 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 		break
 	}
 	return result
+}
+
+func (r *unwrapResult) discardLeading(n int) {
+	if n <= 0 {
+		return
+	}
+	if n > len(r.tokens) {
+		n = len(r.tokens)
+	}
+	r.discarded = append(r.discarded, r.tokens[:n]...)
+	r.tokens = r.tokens[n:]
 }
 
 // isEnvVarAssignment returns true if tok looks like KEY=value where KEY is a

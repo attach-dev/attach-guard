@@ -109,6 +109,34 @@ func TestGetPackageScoreSendsMinimalPayloadAndPreservesVerdict(t *testing.T) {
 	}
 }
 
+func TestGetPackageScoreNormalizesPNPMPayloadEcosystem(t *testing.T) {
+	seenRequest := false
+	prov := newMockProvider(func(r *http.Request) (*http.Response, error) {
+		seenRequest = true
+
+		var payload map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got := payload["ecosystem"]; got != string(api.EcosystemNPM) {
+			t.Fatalf("expected payload ecosystem %q, got %q", api.EcosystemNPM, got)
+		}
+
+		return jsonResponse(http.StatusOK, `{"decision":"ALLOW"}`), nil
+	})
+
+	info, err := prov.GetPackageScore(context.Background(), api.EcosystemPNPM, "synthetic-pkg", "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !seenRequest {
+		t.Fatal("server did not receive request")
+	}
+	if info.ProviderVerdict == nil || info.ProviderVerdict.Decision != api.ProviderVerdictAllow {
+		t.Fatalf("expected ALLOW verdict, got %+v", info.ProviderVerdict)
+	}
+}
+
 func TestGetPackageScoreAcceptsAttachOpenScoreV0VerdictShape(t *testing.T) {
 	prov := newMockProvider(func(r *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, `{

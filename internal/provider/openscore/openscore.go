@@ -126,7 +126,7 @@ func (p *Provider) IsAvailable(_ context.Context) bool {
 // GetPackageScore fetches an Attach Open Score verdict for a package version.
 func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem, name, version string) (*api.VersionInfo, error) {
 	payload := verdictRequest{
-		Ecosystem: ecosystem,
+		Ecosystem: openScoreRequestEcosystem(ecosystem),
 		Name:      name,
 		Version:   version,
 	}
@@ -186,6 +186,15 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 // versions.
 func (p *Provider) ListVersions(_ context.Context, _ api.Ecosystem, _ string) ([]api.VersionInfo, error) {
 	return nil, provider.ErrUnsupportedSource
+}
+
+func openScoreRequestEcosystem(ecosystem api.Ecosystem) api.Ecosystem {
+	switch ecosystem {
+	case api.EcosystemPNPM:
+		return api.EcosystemNPM
+	default:
+		return ecosystem
+	}
 }
 
 func validateEndpoint(endpoint string) (string, error) {
