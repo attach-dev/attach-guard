@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -76,7 +77,7 @@ func TestGetPackageScoreSendsMinimalPayloadAndPreservesVerdict(t *testing.T) {
 			}
 		}
 
-		return jsonResponse(http.StatusOK, `{"decision":"DENY","score":91,"reasons":["synthetic-risk"],"source_refs":["osv:TEST-0001"]}`), nil
+		return jsonResponse(http.StatusOK, `{"decision":"DENY","score":91,"confidence":"HIGH","reasons":["synthetic-risk"],"source_refs":["osv:TEST-0001"]}`), nil
 	})
 
 	info, err := prov.GetPackageScore(context.Background(), api.EcosystemNPM, "synthetic-pkg", "1.2.3")
@@ -100,6 +101,9 @@ func TestGetPackageScoreSendsMinimalPayloadAndPreservesVerdict(t *testing.T) {
 	}
 	if info.ProviderVerdict.RiskScore == nil || *info.ProviderVerdict.RiskScore != 91 {
 		t.Fatalf("expected risk score 91, got %v", info.ProviderVerdict.RiskScore)
+	}
+	if info.ProviderVerdict.Confidence != "HIGH" {
+		t.Fatalf("expected confidence HIGH, got %q", info.ProviderVerdict.Confidence)
 	}
 	if got := strings.Join(info.ProviderVerdict.Reasons, ","); got != "synthetic-risk" {
 		t.Fatalf("expected reason preserved, got %q", got)
@@ -194,6 +198,9 @@ func TestGetPackageScoreAcceptsAttachOpenScoreV0VerdictShape(t *testing.T) {
 	if info.ProviderVerdict.RiskScore == nil || *info.ProviderVerdict.RiskScore != 96 {
 		t.Fatalf("expected risk score 96, got %v", info.ProviderVerdict.RiskScore)
 	}
+	if info.ProviderVerdict.Confidence != "HIGH" {
+		t.Fatalf("expected confidence HIGH, got %q", info.ProviderVerdict.Confidence)
+	}
 	if got := strings.Join(info.ProviderVerdict.Reasons, ","); got != "KNOWN_VULNERABILITY_CRITICAL" {
 		t.Fatalf("expected reason code preserved, got %q", got)
 	}
@@ -203,15 +210,18 @@ func TestGetPackageScoreAcceptsAttachOpenScoreV0VerdictShape(t *testing.T) {
 }
 
 func TestGetPackageScoreAcceptsUppercaseDecisions(t *testing.T) {
-	for _, decision := range []api.ProviderVerdictDecision{
+	for i, decision := range []api.ProviderVerdictDecision{
 		api.ProviderVerdictAllow,
 		api.ProviderVerdictAsk,
 		api.ProviderVerdictDeny,
 		api.ProviderVerdictUnknown,
 	} {
 		t.Run(string(decision), func(t *testing.T) {
+			riskScore := 20 + i
+			reason := "reason-" + string(decision)
+			sourceRef := "osv:synthetic-" + string(decision)
 			prov := newMockProvider(func(r *http.Request) (*http.Response, error) {
-				return jsonResponse(http.StatusOK, `{"decision":"`+string(decision)+`"}`), nil
+				return jsonResponse(http.StatusOK, fmt.Sprintf(`{"decision":%q,"score":%d,"confidence":"MEDIUM","reasons":[%q],"source_refs":[%q]}`, decision, riskScore, reason, sourceRef)), nil
 			})
 
 			info, err := prov.GetPackageScore(context.Background(), api.EcosystemPyPI, "synthetic-pkg", "2.0.0")
@@ -220,6 +230,18 @@ func TestGetPackageScoreAcceptsUppercaseDecisions(t *testing.T) {
 			}
 			if info.ProviderVerdict == nil || info.ProviderVerdict.Decision != decision {
 				t.Fatalf("expected %s verdict, got %+v", decision, info.ProviderVerdict)
+			}
+			if info.ProviderVerdict.RiskScore == nil || *info.ProviderVerdict.RiskScore != riskScore {
+				t.Fatalf("expected risk score %d, got %v", riskScore, info.ProviderVerdict.RiskScore)
+			}
+			if info.ProviderVerdict.Confidence != "MEDIUM" {
+				t.Fatalf("expected confidence MEDIUM, got %q", info.ProviderVerdict.Confidence)
+			}
+			if len(info.ProviderVerdict.Reasons) != 1 || info.ProviderVerdict.Reasons[0] != reason {
+				t.Fatalf("expected reason %q, got %#v", reason, info.ProviderVerdict.Reasons)
+			}
+			if len(info.ProviderVerdict.SourceRefs) != 1 || info.ProviderVerdict.SourceRefs[0] != sourceRef {
+				t.Fatalf("expected source ref %q, got %#v", sourceRef, info.ProviderVerdict.SourceRefs)
 			}
 		})
 	}
@@ -341,6 +363,9 @@ func assertUnavailableUnknown(t *testing.T, info *api.VersionInfo) {
 	}
 	if info.ProviderVerdict.RiskScore != nil {
 		t.Fatalf("expected no risk score on provider failure, got %v", info.ProviderVerdict.RiskScore)
+	}
+	if info.ProviderVerdict.Confidence != "" {
+		t.Fatalf("expected no confidence on provider failure, got %q", info.ProviderVerdict.Confidence)
 	}
 	if info.Score != (api.PackageScore{}) {
 		t.Fatalf("expected no PackageScore on provider failure, got %+v", info.Score)

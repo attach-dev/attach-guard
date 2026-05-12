@@ -54,6 +54,7 @@ const (
 type ProviderVerdict struct {
 	Decision   ProviderVerdictDecision `json:"decision"`
 	RiskScore  *int                    `json:"risk_score,omitempty"`
+	Confidence string                  `json:"confidence,omitempty"`
 	Reasons    []string                `json:"reasons,omitempty"`
 	SourceRefs []string                `json:"source_refs,omitempty"`
 }

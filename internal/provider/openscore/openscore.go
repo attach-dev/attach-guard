@@ -54,6 +54,7 @@ type verdictRequest struct {
 type verdictResponse struct {
 	Decision   string        `json:"decision"`
 	Score      *int          `json:"score,omitempty"`
+	Confidence string        `json:"confidence,omitempty"`
 	Reasons    reasonList    `json:"reasons,omitempty"`
 	SourceRefs sourceRefList `json:"source_refs,omitempty"`
 }
@@ -172,6 +173,7 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 			ProviderVerdict: &api.ProviderVerdict{
 				Decision:   decision,
 				RiskScore:  response.Score,
+				Confidence: strings.TrimSpace(response.Confidence),
 				Reasons:    []string(response.Reasons),
 				SourceRefs: []string(response.SourceRefs),
 			},

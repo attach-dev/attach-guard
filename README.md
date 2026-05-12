@@ -322,7 +322,7 @@ provider:
   timeout_seconds: 5
 ```
 
-The `open-score` provider posts only public package coordinates (`ecosystem`, `name`, `version`) and consumes verdict fields (`decision`, optional `score`, `reasons`, `source_refs`). Provider failures and malformed responses map to `UNKNOWN`/provider-unavailable behavior, never `ALLOW`.
+The `open-score` provider posts only public package coordinates (`ecosystem`, `name`, `version`) and consumes verdict fields (`decision`, optional `score`, optional `confidence`, `reasons`, summarized `source_refs`). Provider failures and malformed responses map to `UNKNOWN`/provider-unavailable behavior, never `ALLOW`.
 
 For BYO-token local provider configuration, see [Advanced: BYO-token local providers](#advanced-byo-token-local-providers).
 

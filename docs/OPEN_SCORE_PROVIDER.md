@@ -44,6 +44,7 @@ The v0 implementation avoids forcing Open Score through the existing Socket-styl
 type ProviderVerdict struct {
     Decision   string   // ALLOW, ASK, DENY, UNKNOWN
     RiskScore  *int     // Open Score risk score, higher means riskier
+    Confidence string   // optional Open Score confidence label
     Reasons    []string // Open Score reason codes or rendered reason IDs
     SourceRefs []string // source reference IDs/URLs safe for audit output
 }
@@ -60,9 +61,10 @@ Decision precedence should remain conservative:
 - provider unavailability maps to local ask/warn by default, not silent allow
 
 Evaluation and audit output must preserve the provider verdict payload, including
-public-safe `source_refs`, so downstream explanation/audit UX can attribute OSV,
-GHSA, deps.dev, registry metadata, or other allowed public evidence instead of
-reducing decisions to an opaque allow/ask/deny.
+optional `confidence` and public-safe `source_refs`, so downstream
+explanation/audit UX can attribute OSV, GHSA, deps.dev, registry metadata, or
+other allowed public evidence instead of reducing decisions to an opaque
+allow/ask/deny.
 
 ## Score polarity warning
 
@@ -82,7 +84,7 @@ The preferred v0 integration is verdict-first. This leaves less room for acciden
 
 ## Reason and source propagation
 
-Open Score verdicts include reason codes and `source_refs`. attach-guard should preserve these in user-facing reasons and audit logs where possible.
+Open Score verdicts include reason codes, optional `confidence`, and `source_refs`. attach-guard should preserve these in user-facing reasons and audit logs where possible.
 
 Initial implementation can compress reasons into a human-readable reason string, but should avoid discarding structured data permanently. Future audit entries should be able to include:
 
@@ -137,7 +139,7 @@ policy:
     ci: deny
 ```
 
-The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, `reasons`, and `source_refs`. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 HTTP provider path.
+The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 HTTP provider path.
 
 Socket provider docs must keep this in advanced/local BYO-token context and show explicit configuration:
 
