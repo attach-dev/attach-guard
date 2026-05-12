@@ -47,7 +47,7 @@ What this covers:
 - `ASK` maps to local review/confirmation.
 - `UNKNOWN` and provider HTTP failures map to local ask/warn by default and follow explicit mode config when configured.
 - Provider unavailable behavior follows `policy.provider_unavailable_behavior`.
-- Open Score reasons and `source_refs` survive into evaluation and audit-visible structures.
+- Open Score confidence, reasons, and `source_refs` survive into evaluation and audit-visible structures.
 - Unpinned-version selection preserves Open Score-style verdict reasons when it suggests or rejects candidate versions.
 
 Then run the full suite before sending a docs PR:
@@ -107,6 +107,7 @@ Evaluation output and audit data use related public result vocabulary, but not e
 - `decision`: attach-guard decision, one of `allow`, `ask`, or `deny`.
 - `provider`: provider name in audit entries, such as `mock` in tests or `socket` for local BYO-token runs.
 - `packages[].provider_verdict`: present when the provider/test fixture supplied verdict-first data.
+- Structured Open Score `source_refs` are summarized as IDs or URLs in `provider_verdict.source_refs`; raw upstream source reference objects are not written back out.
 
 Synthetic Open Score-style audit payloads may include:
 
@@ -115,6 +116,7 @@ Synthetic Open Score-style audit payloads may include:
   "provider_verdict": {
     "decision": "UNKNOWN",
     "risk_score": 50,
+    "confidence": "LOW",
     "reasons": ["insufficient-public-evidence-synthetic"],
     "source_refs": ["osv:synthetic-public-fixture"]
   }

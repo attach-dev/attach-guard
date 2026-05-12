@@ -25,7 +25,7 @@ func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *tes
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		writeOpenScoreVerdict(t, w, api.ProviderVerdictAllow, 3, []string{"low-risk-synthetic"}, []string{"osv:synthetic-safe-0001"})
+		writeOpenScoreObjectVerdict(t, w, api.ProviderVerdictAllow, 3, "HIGH", "low-risk-synthetic", "osv:synthetic-safe-0001")
 	}))
 
 	result, err := eval.Evaluate(context.Background(), "npm install safe-pkg@1.0.0", api.ModeShell)
@@ -44,7 +44,8 @@ func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *tes
 	if result.Packages[0].SelectedVersion != "1.0.0" {
 		t.Fatalf("expected selected version 1.0.0, got %q", result.Packages[0].SelectedVersion)
 	}
-	assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 3, "low-risk-synthetic", "osv:synthetic-safe-0001")
+	assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 3, "HIGH", "low-risk-synthetic", "osv:synthetic-safe-0001")
+	assertNoRawOpenScoreSourceDump(t, result)
 
 	entry := readOpenScoreAuditEntry(t, auditPath)
 	if entry.Provider != "open-score" {
@@ -56,7 +57,8 @@ func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *tes
 	if len(entry.Packages) != 1 {
 		t.Fatalf("expected one audit package, got %d", len(entry.Packages))
 	}
-	assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 3, "low-risk-synthetic", "osv:synthetic-safe-0001")
+	assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 3, "HIGH", "low-risk-synthetic", "osv:synthetic-safe-0001")
+	assertNoRawOpenScoreSourceDump(t, entry)
 }
 
 func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
@@ -65,6 +67,7 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 		pkg          string
 		decision     api.ProviderVerdictDecision
 		riskScore    int
+		confidence   string
 		reason       string
 		sourceRef    string
 		wantDecision api.Decision
@@ -74,6 +77,7 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 			pkg:          "risky-pkg",
 			decision:     api.ProviderVerdictDeny,
 			riskScore:    94,
+			confidence:   "HIGH",
 			reason:       "deny-risk-synthetic",
 			sourceRef:    "ghsa:synthetic-deny-0001",
 			wantDecision: api.Deny,
@@ -83,6 +87,7 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 			pkg:          "review-pkg",
 			decision:     api.ProviderVerdictAsk,
 			riskScore:    47,
+			confidence:   "MEDIUM",
 			reason:       "manual-review-synthetic",
 			sourceRef:    "deps.dev:synthetic-review-0001",
 			wantDecision: api.Ask,
@@ -92,6 +97,7 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 			pkg:          "unknown-pkg",
 			decision:     api.ProviderVerdictUnknown,
 			riskScore:    0,
+			confidence:   "LOW",
 			reason:       "insufficient-evidence-synthetic",
 			sourceRef:    "osv:synthetic-unknown-0001",
 			wantDecision: api.Ask,
@@ -100,12 +106,12 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			eval, auditPath := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if !validateOpenScoreCoordinateRequest(t, r, tt.pkg, "1.0.0") {
 					http.Error(w, "bad request", http.StatusBadRequest)
 					return
 				}
-				writeOpenScoreVerdict(t, w, tt.decision, tt.riskScore, []string{tt.reason}, []string{tt.sourceRef})
+				writeOpenScoreVerdict(t, w, tt.decision, tt.riskScore, tt.confidence, []string{tt.reason}, []string{tt.sourceRef})
 			}))
 
 			result, err := eval.Evaluate(context.Background(), "npm install "+tt.pkg+"@1.0.0", api.ModeShell)
@@ -121,7 +127,16 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 			if len(result.Packages) != 1 {
 				t.Fatalf("expected one package evaluation, got %d", len(result.Packages))
 			}
-			assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, tt.decision, tt.riskScore, tt.reason, tt.sourceRef)
+			assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, tt.decision, tt.riskScore, tt.confidence, tt.reason, tt.sourceRef)
+
+			entry := readOpenScoreAuditEntry(t, auditPath)
+			if entry.Decision != tt.wantDecision {
+				t.Fatalf("expected audit decision %s, got %s", tt.wantDecision, entry.Decision)
+			}
+			if len(entry.Packages) != 1 {
+				t.Fatalf("expected one audit package, got %d", len(entry.Packages))
+			}
+			assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, tt.decision, tt.riskScore, tt.confidence, tt.reason, tt.sourceRef)
 		})
 	}
 }
@@ -162,7 +177,7 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskLocallyWithProviderUnavailableVerdi
 				return
 			}
 			time.Sleep(2 * time.Second)
-			writeOpenScoreVerdict(t, w, api.ProviderVerdictAllow, 1, []string{"late-synthetic"}, []string{"osv:late-synthetic"})
+			writeOpenScoreVerdict(t, w, api.ProviderVerdictAllow, 1, "HIGH", []string{"late-synthetic"}, []string{"osv:late-synthetic"})
 		}))
 		assertOpenScoreProviderFailureAsks(t, eval, "timeout-pkg")
 	})
@@ -232,9 +247,23 @@ func openScoreHandlerClient(handler http.Handler) *http.Client {
 	return &http.Client{
 		Timeout: time.Second,
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, req)
-			return recorder.Result(), nil
+			type handlerResult struct {
+				resp *http.Response
+				err  error
+			}
+			done := make(chan handlerResult, 1)
+			go func() {
+				recorder := httptest.NewRecorder()
+				handler.ServeHTTP(recorder, req)
+				done <- handlerResult{resp: recorder.Result()}
+			}()
+
+			select {
+			case <-req.Context().Done():
+				return nil, req.Context().Err()
+			case result := <-done:
+				return result.resp, result.err
+			}
 		}),
 	}
 }
@@ -278,18 +307,20 @@ func validateOpenScoreCoordinateRequest(t *testing.T, r *http.Request, wantName,
 	return ok
 }
 
-func writeOpenScoreVerdict(t *testing.T, w http.ResponseWriter, decision api.ProviderVerdictDecision, riskScore int, reasons, sourceRefs []string) {
+func writeOpenScoreVerdict(t *testing.T, w http.ResponseWriter, decision api.ProviderVerdictDecision, riskScore int, confidence string, reasons, sourceRefs []string) {
 	t.Helper()
 
 	w.Header().Set("Content-Type", "application/json")
 	response := struct {
 		Decision   api.ProviderVerdictDecision `json:"decision"`
 		Score      int                         `json:"score"`
+		Confidence string                      `json:"confidence,omitempty"`
 		Reasons    []string                    `json:"reasons,omitempty"`
 		SourceRefs []string                    `json:"source_refs,omitempty"`
 	}{
 		Decision:   decision,
 		Score:      riskScore,
+		Confidence: confidence,
 		Reasons:    reasons,
 		SourceRefs: sourceRefs,
 	}
@@ -298,7 +329,39 @@ func writeOpenScoreVerdict(t *testing.T, w http.ResponseWriter, decision api.Pro
 	}
 }
 
-func assertOpenScoreVerdict(t *testing.T, verdict *api.ProviderVerdict, decision api.ProviderVerdictDecision, riskScore int, reason, sourceRef string) {
+func writeOpenScoreObjectVerdict(t *testing.T, w http.ResponseWriter, decision api.ProviderVerdictDecision, riskScore int, confidence, reason, sourceRef string) {
+	t.Helper()
+
+	w.Header().Set("Content-Type", "application/json")
+	response := map[string]interface{}{
+		"schema_version": "attach-open-score/v0",
+		"decision":       decision,
+		"score":          riskScore,
+		"confidence":     confidence,
+		"reasons": []map[string]interface{}{
+			{
+				"code":           reason,
+				"severity":       "LOW",
+				"message":        "Synthetic fixture.",
+				"source_ref_ids": []string{sourceRef},
+			},
+		},
+		"source_refs": []map[string]interface{}{
+			{
+				"id":          sourceRef,
+				"source":      "synthetic-upstream-source",
+				"source_id":   "SYNTHETIC-UPSTREAM-0001",
+				"url":         "https://example.invalid/synthetic",
+				"attribution": "Synthetic fixture.",
+			},
+		},
+	}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		t.Errorf("encode response: %v", err)
+	}
+}
+
+func assertOpenScoreVerdict(t *testing.T, verdict *api.ProviderVerdict, decision api.ProviderVerdictDecision, riskScore int, confidence, reason, sourceRef string) {
 	t.Helper()
 
 	if verdict == nil {
@@ -310,11 +373,32 @@ func assertOpenScoreVerdict(t *testing.T, verdict *api.ProviderVerdict, decision
 	if verdict.RiskScore == nil || *verdict.RiskScore != riskScore {
 		t.Fatalf("expected risk score %d, got %v", riskScore, verdict.RiskScore)
 	}
+	if verdict.Confidence != confidence {
+		t.Fatalf("expected confidence %q, got %q", confidence, verdict.Confidence)
+	}
 	if len(verdict.Reasons) != 1 || verdict.Reasons[0] != reason {
 		t.Fatalf("expected reason %q, got %#v", reason, verdict.Reasons)
 	}
 	if len(verdict.SourceRefs) != 1 || verdict.SourceRefs[0] != sourceRef {
 		t.Fatalf("expected source ref %q, got %#v", sourceRef, verdict.SourceRefs)
+	}
+}
+
+func assertNoRawOpenScoreSourceDump(t *testing.T, value interface{}) {
+	t.Helper()
+
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unexpected := range []string{
+		"synthetic-upstream-source",
+		"SYNTHETIC-UPSTREAM-0001",
+		"Synthetic fixture.",
+	} {
+		if strings.Contains(string(data), unexpected) {
+			t.Fatalf("expected output to omit raw Open Score source object details %q, got %s", unexpected, data)
+		}
 	}
 }
 
@@ -344,6 +428,9 @@ func assertOpenScoreProviderFailureAsks(t *testing.T, eval *cli.Evaluator, pkg s
 	}
 	if verdict.RiskScore != nil {
 		t.Fatalf("expected no risk score on provider-unavailable verdict, got %v", verdict.RiskScore)
+	}
+	if verdict.Confidence != "" {
+		t.Fatalf("expected no confidence on provider-unavailable verdict, got %q", verdict.Confidence)
 	}
 	if len(verdict.Reasons) != 1 || verdict.Reasons[0] != "provider-unavailable" {
 		t.Fatalf("expected provider-unavailable reason, got %#v", verdict.Reasons)

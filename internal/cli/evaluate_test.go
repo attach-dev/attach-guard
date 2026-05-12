@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -60,9 +61,10 @@ func TestEvaluate_PinnedOpenScoreVerdictDeny(t *testing.T) {
 		PublishedAt: time.Now().Add(-240 * time.Hour),
 		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
 		ProviderVerdict: &api.ProviderVerdict{
-			Decision:  api.ProviderVerdictDeny,
-			RiskScore: &riskScore,
-			Reasons:   []string{"high-risk-synthetic"},
+			Decision:   api.ProviderVerdictDeny,
+			RiskScore:  &riskScore,
+			Confidence: "HIGH",
+			Reasons:    []string{"high-risk-synthetic"},
 			SourceRefs: []string{
 				"osv:GHSA-0000-0000-0000",
 				"deps.dev:npm/risky-pkg/1.0.0",
@@ -83,6 +85,61 @@ func TestEvaluate_PinnedOpenScoreVerdictDeny(t *testing.T) {
 	}
 	if got := result.Packages[0].ProviderVerdict.SourceRefs; len(got) != 2 || got[0] != "osv:GHSA-0000-0000-0000" {
 		t.Fatalf("expected provider source refs to be preserved for audit/explain output, got %#v", got)
+	}
+	if got := result.Packages[0].ProviderVerdict.Confidence; got != "HIGH" {
+		t.Fatalf("expected provider confidence to be preserved for audit/explain output, got %q", got)
+	}
+}
+
+func TestEvaluateJSON_PreservesOpenScoreVerdictConfidenceAndSourceRefs(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	riskScore := 42
+
+	mock.Scores["review-pkg@1.0.0"] = &api.VersionInfo{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		Score:       api.PackageScore{SupplyChain: 95, Overall: 95},
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision:   api.ProviderVerdictAsk,
+			RiskScore:  &riskScore,
+			Confidence: "MEDIUM",
+			Reasons:    []string{"manual-review-synthetic"},
+			SourceRefs: []string{"deps.dev:npm/review-pkg/1.0.0"},
+		},
+	}
+
+	eval := NewEvaluator(cfg, mock)
+	data, err := eval.EvaluateJSON(context.Background(), "npm install review-pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"confidence": "MEDIUM"`) {
+		t.Fatalf("expected evaluation JSON to include confidence, got %s", data)
+	}
+
+	var result api.EvaluationResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Packages) != 1 || result.Packages[0].ProviderVerdict == nil {
+		t.Fatalf("expected evaluation JSON to preserve provider verdict, got %+v", result.Packages)
+	}
+	verdict := result.Packages[0].ProviderVerdict
+	if verdict.Decision != api.ProviderVerdictAsk {
+		t.Fatalf("expected ASK verdict, got %s", verdict.Decision)
+	}
+	if verdict.RiskScore == nil || *verdict.RiskScore != riskScore {
+		t.Fatalf("expected risk score %d, got %v", riskScore, verdict.RiskScore)
+	}
+	if verdict.Confidence != "MEDIUM" {
+		t.Fatalf("expected confidence MEDIUM, got %q", verdict.Confidence)
+	}
+	if len(verdict.Reasons) != 1 || verdict.Reasons[0] != "manual-review-synthetic" {
+		t.Fatalf("expected reason preserved, got %#v", verdict.Reasons)
+	}
+	if len(verdict.SourceRefs) != 1 || verdict.SourceRefs[0] != "deps.dev:npm/review-pkg/1.0.0" {
+		t.Fatalf("expected source refs preserved, got %#v", verdict.SourceRefs)
 	}
 }
 

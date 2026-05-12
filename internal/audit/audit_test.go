@@ -29,6 +29,7 @@ func TestLogger_Log(t *testing.T) {
 				Score:           api.PackageScore{SupplyChain: 92, Overall: 88},
 				ProviderVerdict: &api.ProviderVerdict{
 					Decision:   api.ProviderVerdictAllow,
+					Confidence: "HIGH",
 					Reasons:    []string{"safe-synthetic"},
 					SourceRefs: []string{"osv:GHSA-0000-0000-0000"},
 				},
@@ -67,6 +68,9 @@ func TestLogger_Log(t *testing.T) {
 	}
 	if entry.Packages[0].ProviderVerdict == nil {
 		t.Fatal("expected audit package to preserve provider verdict")
+	}
+	if got := entry.Packages[0].ProviderVerdict.Confidence; got != "HIGH" {
+		t.Fatalf("expected audit package to preserve confidence, got %q", got)
 	}
 	if got := entry.Packages[0].ProviderVerdict.SourceRefs; len(got) != 1 || got[0] != "osv:GHSA-0000-0000-0000" {
 		t.Fatalf("expected audit package to preserve source refs, got %#v", got)
