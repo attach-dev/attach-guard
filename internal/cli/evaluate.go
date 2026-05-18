@@ -51,10 +51,25 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 				OriginalCommand: rawCommand,
 			}, nil
 		}
+		if e.openScoreYarnEnabled() && parser.LooksLikeYarnInstall(rawCommand) {
+			return &api.EvaluationResult{
+				Decision:        api.Ask,
+				Reason:          "yarn command looks like a package install but could not be fully parsed; manual review required",
+				OriginalCommand: rawCommand,
+			}, nil
+		}
 		// Not an install command — allow passthrough
 		return &api.EvaluationResult{
 			Decision:        api.Allow,
 			Reason:          "not a guarded install command",
+			OriginalCommand: rawCommand,
+		}, nil
+	}
+
+	if e.openScoreYarnEnabled() && shouldDeferOpenScoreYarn(rawCommand, cmds) {
+		return &api.EvaluationResult{
+			Decision:        api.Ask,
+			Reason:          "yarn command contains source, registry, coordinate, or wrapper details that could not be evaluated safely; manual review required",
 			OriginalCommand: rawCommand,
 		}, nil
 	}
@@ -73,6 +88,13 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		enabledCmds = append(enabledCmds, cmd)
 	}
 	if len(enabledCmds) == 0 {
+		if allOpenScoreYarnOnly(cmds) && !e.openScoreYarnEnabled() {
+			return &api.EvaluationResult{
+				Decision:        api.Allow,
+				Reason:          "not a guarded install command",
+				OriginalCommand: rawCommand,
+			}, nil
+		}
 		return &api.EvaluationResult{
 			Decision:        api.Allow,
 			Reason:          disabledPackageManagersReason(disabledPMs),
@@ -278,9 +300,41 @@ func (e *Evaluator) packageManagerEnabled(pm string) bool {
 		return e.cfg.PackageManagers.Go
 	case "cargo":
 		return e.cfg.PackageManagers.Cargo
+	case "yarn":
+		return e.openScoreYarnEnabled()
 	default:
 		return true
 	}
+}
+
+func (e *Evaluator) openScoreYarnEnabled() bool {
+	return e != nil && e.cfg != nil && e.cfg.Provider.Kind == "open-score"
+}
+
+func allOpenScoreYarnOnly(cmds []*api.ParsedCommand) bool {
+	if len(cmds) == 0 {
+		return false
+	}
+	for _, cmd := range cmds {
+		if cmd.PackageManager != "yarn" {
+			return false
+		}
+	}
+	return true
+}
+
+func shouldDeferOpenScoreYarn(rawCommand string, cmds []*api.ParsedCommand) bool {
+	seenYarn := false
+	for _, cmd := range cmds {
+		if cmd.PackageManager != "yarn" {
+			continue
+		}
+		seenYarn = true
+		if cmd.HasNonLocalUnparsedArgs || (cmd.HasUnparsedArgs && len(cmd.Packages) == 0) {
+			return true
+		}
+	}
+	return !seenYarn && parser.LooksLikeYarnInstall(rawCommand)
 }
 
 func disabledPackageManagersReason(disabledPMs []string) string {

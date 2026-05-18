@@ -206,6 +206,130 @@ func TestParse_PNPM_PreActionFlags(t *testing.T) {
 	}
 }
 
+func TestParse_YarnOpenScoreSafePublicCoordinates(t *testing.T) {
+	tests := []struct {
+		name        string
+		command     string
+		wantName    string
+		wantVersion string
+	}{
+		{"basic exact", "yarn add react@18.2.0", "react", "18.2.0"},
+		{"scoped exact", "yarn add @types/node@20.0.0", "@types/node", "20.0.0"},
+		{"env wrapped exact", "env NODE_ENV=test yarn add react@18.2.0", "react", "18.2.0"},
+		{"shell wrapped exact", "bash -lc 'yarn add react@18.2.0'", "react", "18.2.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", tt.command)
+			}
+			if result.PackageManager != "yarn" {
+				t.Fatalf("PackageManager = %q, want yarn", result.PackageManager)
+			}
+			if len(result.Packages) != 1 {
+				t.Fatalf("Packages = %#v, want one package", result.Packages)
+			}
+			pkg := result.Packages[0]
+			if pkg.Ecosystem != "npm" || pkg.Name != tt.wantName || pkg.Version != tt.wantVersion || !pkg.Pinned {
+				t.Fatalf("package = %#v, want npm %s@%s pinned", pkg, tt.wantName, tt.wantVersion)
+			}
+			if result.HasNonLocalUnparsedArgs {
+				t.Fatalf("HasNonLocalUnparsedArgs = true for safe public coordinate")
+			}
+		})
+	}
+}
+
+func TestParse_YarnCustomSourcesDeferBeforeProvider(t *testing.T) {
+	tests := []string{
+		"yarn add react@18.2.0 --registry https://private.example/npm",
+		"yarn add react@18.2.0 --registry=https://private.example/npm",
+		"yarn --registry https://private.example/npm add react@18.2.0",
+		"yarn --cwd ../private add @private/pkg@1.0.0",
+		"yarn add react@18.2.0 --offline",
+		"yarn add react@18.2.0 --cache-folder ../private-cache",
+		"YARN_NPM_REGISTRY_SERVER=https://private.example/npm yarn add react@18.2.0",
+		"YARN_NPM_AUTH_TOKEN=synthetic-token yarn add @private/pkg@1.0.0",
+		"YARN_NPM_AUTH_IDENT=synthetic-user:synthetic-pass yarn add @private/pkg@1.0.0",
+		"YARN_RC_FILENAME=.yarnrc.private yarn add react@18.2.0",
+		"NPM_CONFIG_REGISTRY=https://private.example/npm yarn add react@18.2.0",
+		"yarn add alias@npm:private-pkg@1.0.0",
+		"yarn add react@workspace:*",
+		"yarn add workspace:*",
+		"yarn add link:../private-pkg",
+		"yarn add file:../private-pkg.tgz",
+		"yarn add portal:../private-pkg",
+		"yarn add patch:react@npm%3A18.2.0#./patches/react.patch",
+		"yarn add git+ssh://git.example/private/repo.git",
+		"yarn add https://git.example/private/repo.git",
+		"yarn add ../private-pkg",
+		"bash -lc 'yarn add react@18.2.0 --registry https://private.example/npm'",
+		"yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0",
+		"bash -lc 'yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0'",
+	}
+
+	for _, command := range tests {
+		t.Run(command, func(t *testing.T) {
+			result := Parse(command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", command)
+			}
+			if result.PackageManager != "yarn" {
+				t.Fatalf("PackageManager = %q, want yarn", result.PackageManager)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("Packages = %#v, want none for custom source", result.Packages)
+			}
+			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
+				t.Fatalf("unparsed flags = (%v, %v), want both true", result.HasUnparsedArgs, result.HasNonLocalUnparsedArgs)
+			}
+		})
+	}
+}
+
+func TestParse_YarnWorkspaceAndGlobalAddDeferBeforeProvider(t *testing.T) {
+	tests := []string{
+		"yarn workspace web add react@18.2.0",
+		"yarn --ignore-engines workspace web add react@18.2.0",
+		"yarn global add react@18.2.0",
+		"strace yarn workspace web add react@18.2.0",
+		"strace yarn global add react@18.2.0",
+	}
+
+	for _, command := range tests {
+		t.Run(command, func(t *testing.T) {
+			result := Parse(command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil", command)
+			}
+			if result.PackageManager != "yarn" {
+				t.Fatalf("PackageManager = %q, want yarn", result.PackageManager)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("Packages = %#v, want none for deferred Yarn subcommand", result.Packages)
+			}
+			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
+				t.Fatalf("unparsed flags = (%v, %v), want both true", result.HasUnparsedArgs, result.HasNonLocalUnparsedArgs)
+			}
+		})
+	}
+}
+
+func TestParse_YarnTagsAreNotExactOpenScoreCoordinates(t *testing.T) {
+	result := Parse("yarn add react@beta")
+	if result == nil {
+		t.Fatal("Parse returned nil")
+	}
+	if len(result.Packages) != 1 {
+		t.Fatalf("Packages = %#v, want one package", result.Packages)
+	}
+	if result.Packages[0].Pinned {
+		t.Fatalf("react@beta should not be treated as an exact Open Score coordinate: %#v", result.Packages[0])
+	}
+}
+
 func TestParse_ShellOperators(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -778,6 +902,16 @@ func TestLooksLikeInstall(t *testing.T) {
 		if LooksLikeInstall(cmd) {
 			t.Errorf("LooksLikeInstall(%q) = true, want false", cmd)
 		}
+	}
+}
+
+func TestLooksLikeYarnInstallIsOpenScoreOnlyHeuristic(t *testing.T) {
+	command := "strace yarn add react@18.2.0"
+	if LooksLikeInstall(command) {
+		t.Fatalf("LooksLikeInstall(%q) = true, want false so default providers do not start guarding Yarn", command)
+	}
+	if !LooksLikeYarnInstall(command) {
+		t.Fatalf("LooksLikeYarnInstall(%q) = false, want true for explicit Open Score posture", command)
 	}
 }
 

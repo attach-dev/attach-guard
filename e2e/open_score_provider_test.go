@@ -213,6 +213,117 @@ func TestE2E_OpenScoreHTTPProviderPreservesMultiEcosystemIdentityAndProvenance(t
 	}
 }
 
+func TestE2E_OpenScoreYarnExactPublicCoordinatePreservesEvaluationAndAuditVerdict(t *testing.T) {
+	eval, auditPath := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, "react", "18.2.0") {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		writeOpenScoreObjectVerdict(t, w, api.ProviderVerdictAllow, 2, "HIGH", "yarn-public-synthetic", "osv:synthetic-yarn-safe-0001")
+	}))
+
+	result, err := eval.Evaluate(context.Background(), "yarn add react@18.2.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Allow {
+		t.Fatalf("expected Allow for Yarn Open Score ALLOW verdict, got %s: %s", result.Decision, result.Reason)
+	}
+	if len(result.Packages) != 1 {
+		t.Fatalf("expected one package evaluation, got %d", len(result.Packages))
+	}
+	if result.Packages[0].Ecosystem != api.EcosystemNPM || result.Packages[0].Name != "react" || result.Packages[0].SelectedVersion != "18.2.0" {
+		t.Fatalf("unexpected Yarn package evaluation: %+v", result.Packages[0])
+	}
+	assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 2, "HIGH", "yarn-public-synthetic", "osv:synthetic-yarn-safe-0001")
+	assertNoRawOpenScoreSourceDump(t, result)
+
+	entry := readOpenScoreAuditEntry(t, auditPath)
+	if entry.PackageManager != "yarn" {
+		t.Fatalf("expected audit package_manager yarn, got %q", entry.PackageManager)
+	}
+	if entry.Provider != "open-score" {
+		t.Fatalf("expected audit provider open-score, got %q", entry.Provider)
+	}
+	if len(entry.Packages) != 1 {
+		t.Fatalf("expected one audit package, got %d", len(entry.Packages))
+	}
+	assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 2, "HIGH", "yarn-public-synthetic", "osv:synthetic-yarn-safe-0001")
+	assertNoRawOpenScoreSourceDump(t, entry)
+}
+
+func TestE2E_OpenScoreYarnCustomSourcesNeverReachProvider(t *testing.T) {
+	requests := 0
+	eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "custom Yarn source should not reach Open Score", http.StatusInternalServerError)
+	}))
+
+	commands := []string{
+		"yarn add react@18.2.0 --registry https://private.example/npm",
+		"yarn add react@18.2.0 --registry=https://private.example/npm",
+		"yarn --cwd ../private add @private/pkg@1.0.0",
+		"yarn add react@18.2.0 --offline",
+		"yarn add react@18.2.0 --cache-folder ../private-cache",
+		"YARN_RC_FILENAME=.yarnrc.private yarn add react@18.2.0",
+		"yarn add alias@npm:private-pkg@1.0.0",
+		"yarn add react@workspace:*",
+		"yarn add link:../private-pkg",
+		"yarn add file:../private-pkg.tgz",
+		"yarn add portal:../private-pkg",
+		"yarn add patch:react@npm%3A18.2.0#./patches/react.patch",
+		"yarn add git+ssh://git.example/private/repo.git",
+		"yarn add ../private-pkg",
+		"strace yarn add react@18.2.0 --registry https://private.example/npm",
+		"strace yarn add react@18.2.0 && npm install safe-pkg@1.0.0",
+		"yarn add myorg/private-repo@1.0.0",
+		"export YARN_NPM_REGISTRY_SERVER=https://private.example/npm; yarn add @private/pkg@1.0.0",
+		"YARN_NPM_AUTH_TOKEN=synthetic-token yarn add @private/pkg@1.0.0",
+		"YARN_NPM_AUTH_IDENT=synthetic-user:synthetic-pass yarn add @private/pkg@1.0.0",
+	}
+
+	for _, command := range commands {
+		result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", command, err)
+		}
+		if result.Decision != api.Ask {
+			t.Fatalf("expected Ask for custom Yarn source %q, got %s: %s", command, result.Decision, result.Reason)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("expected no Open Score requests for custom Yarn sources, got %d", requests)
+	}
+}
+
+func TestE2E_OpenScoreYarnRegistryMutationAndSubcommandsNeverReachProvider(t *testing.T) {
+	requests := 0
+	eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "deferred Yarn form should not reach Open Score", http.StatusInternalServerError)
+	}))
+
+	commands := []string{
+		"yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0",
+		"yarn workspace web add react@18.2.0",
+		"yarn global add react@18.2.0",
+	}
+
+	for _, command := range commands {
+		result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", command, err)
+		}
+		if result.Decision != api.Ask {
+			t.Fatalf("expected Ask for deferred Yarn form %q, got %s: %s", command, result.Decision, result.Reason)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("expected no Open Score requests for deferred Yarn forms, got %d", requests)
+
+	}
+}
+
 func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 	tests := []struct {
 		name         string

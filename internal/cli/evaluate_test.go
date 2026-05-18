@@ -12,6 +12,52 @@ import (
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
+type recordingProvider struct {
+	name           string
+	available      bool
+	availableCalls int
+	scoreCalls     int
+	versionCalls   int
+	scoreInfo      *api.VersionInfo
+}
+
+func (p *recordingProvider) Name() string {
+	if p.name == "" {
+		return "recording"
+	}
+	return p.name
+}
+
+func (p *recordingProvider) IsAvailable(_ context.Context) bool {
+	p.availableCalls++
+	return p.available
+}
+
+func (p *recordingProvider) GetPackageScore(_ context.Context, _ api.Ecosystem, _ string, version string) (*api.VersionInfo, error) {
+	p.scoreCalls++
+	if p.scoreInfo != nil {
+		return p.scoreInfo, nil
+	}
+	return &api.VersionInfo{
+		Version:     version,
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAllow,
+		},
+	}, nil
+}
+
+func (p *recordingProvider) ListVersions(_ context.Context, _ api.Ecosystem, _ string) ([]api.VersionInfo, error) {
+	p.versionCalls++
+	return []api.VersionInfo{{
+		Version:     "1.0.0",
+		PublishedAt: time.Now().Add(-240 * time.Hour),
+		ProviderVerdict: &api.ProviderVerdict{
+			Decision: api.ProviderVerdictAllow,
+		},
+	}}, nil
+}
+
 func TestEvaluate_AllowGoodPackage(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
@@ -272,6 +318,202 @@ func TestEvaluate_NonInstallCommand(t *testing.T) {
 	}
 	if result.Decision != api.Allow {
 		t.Errorf("expected Allow for non-install command, got %s", result.Decision)
+	}
+}
+
+func TestEvaluate_DefaultProviderDoesNotStartGuardingYarn(t *testing.T) {
+	cfg := config.DefaultConfig()
+	prov := &recordingProvider{name: "socket", available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	commands := []string{
+		"yarn add react@18.2.0",
+		"bash -lc 'yarn add react@18.2.0'",
+		"strace yarn add react@18.2.0",
+		"yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0",
+		"yarn workspace web add react@18.2.0",
+		"yarn global add react@18.2.0",
+	}
+	for _, command := range commands {
+		result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+		if err != nil {
+			t.Fatalf("Evaluate(%q) returned error: %v", command, err)
+		}
+		if result.Decision != api.Allow {
+			t.Fatalf("expected Allow for default-provider Yarn passthrough %q, got %s: %s", command, result.Decision, result.Reason)
+		}
+		if result.Reason != "not a guarded install command" {
+			t.Fatalf("expected legacy passthrough reason for %q, got %q", command, result.Reason)
+		}
+	}
+
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("default provider should not be consulted for Yarn, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+	}
+}
+
+func TestEvaluate_OpenScoreYarnProviderUnavailableAsksLocally(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	prov := &recordingProvider{name: "open-score", available: false}
+	eval := NewEvaluator(cfg, prov)
+
+	result, err := eval.Evaluate(context.Background(), "yarn add react@18.2.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for unavailable Open Score Yarn evaluation, got %s: %s", result.Decision, result.Reason)
+	}
+	if !strings.Contains(result.Reason, "risk provider is unavailable") {
+		t.Fatalf("expected provider-unavailable reason, got %q", result.Reason)
+	}
+	if prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("provider-unavailable path should not request package coordinates, got score=%d versions=%d", prov.scoreCalls, prov.versionCalls)
+	}
+}
+
+func TestEvaluate_OpenScoreYarnCustomSourcesDoNotRequestProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+
+	commands := []string{
+		"yarn add react@18.2.0 --registry https://private.example/npm",
+		"yarn add react@18.2.0 --registry=https://private.example/npm",
+		"YARN_RC_FILENAME=.yarnrc.private yarn add react@18.2.0",
+		"YARN_NPM_REGISTRY_SERVER=https://private.example/npm yarn add react@18.2.0",
+		"yarn add alias@npm:private-pkg@1.0.0",
+		"yarn add react@workspace:*",
+		"yarn add file:../private-pkg.tgz",
+		"yarn add git+ssh://git.example/private/repo.git",
+		"yarn add ../private-pkg",
+		"strace yarn add react@18.2.0 --registry https://private.example/npm",
+	}
+
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			prov := &recordingProvider{name: "open-score", available: true}
+			eval := NewEvaluator(cfg, prov)
+			result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+			if err != nil {
+				t.Fatalf("Evaluate(%q) returned error: %v", command, err)
+			}
+			if result.Decision != api.Ask {
+				t.Fatalf("expected Ask for custom Yarn source %q, got %s: %s", command, result.Decision, result.Reason)
+			}
+			if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+				t.Fatalf("custom Yarn source should not request provider for %q, got available=%d score=%d versions=%d", command, prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+			}
+		})
+	}
+}
+
+func TestEvaluate_OpenScoreYarnRegistryConfigMutationDefersBeforeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	commands := []string{
+		"yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0",
+		"yarn config set registry https://private.example/npm | cat; yarn add @private/pkg@1.0.0",
+		"strace yarn config set registry https://private.example/npm && yarn add @private/pkg@1.0.0",
+	}
+
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			prov := &recordingProvider{name: "open-score", available: true}
+			eval := NewEvaluator(cfg, prov)
+
+			result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != api.Ask {
+				t.Fatalf("expected Ask for represented Yarn registry mutation, got %s: %s", result.Decision, result.Reason)
+			}
+			if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+				t.Fatalf("represented Yarn registry mutation should defer before provider requests, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+			}
+		})
+	}
+}
+
+func TestEvaluate_OpenScoreYarnWorkspaceAndGlobalAddDeferBeforeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+
+	commands := []string{
+		"yarn workspace web add react@18.2.0",
+		"yarn global add react@18.2.0",
+	}
+
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			prov := &recordingProvider{name: "open-score", available: true}
+			eval := NewEvaluator(cfg, prov)
+			result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
+			if err != nil {
+				t.Fatalf("Evaluate(%q) returned error: %v", command, err)
+			}
+			if result.Decision != api.Ask {
+				t.Fatalf("expected Ask for Yarn subcommand %q, got %s: %s", command, result.Decision, result.Reason)
+			}
+			if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+				t.Fatalf("Yarn subcommand should defer before provider requests for %q, got available=%d score=%d versions=%d", command, prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+			}
+		})
+	}
+}
+
+func TestEvaluate_OpenScoreWrappedYarnCueInMixedCommandDefersBeforeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	prov := &recordingProvider{name: "open-score", available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	result, err := eval.Evaluate(context.Background(), "strace yarn add react@18.2.0 && npm install safe-pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for mixed command with wrapped Yarn install, got %s: %s", result.Decision, result.Reason)
+	}
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("wrapped Yarn cue should defer before provider requests, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+	}
+}
+
+func TestEvaluate_OpenScoreYarnInvalidPublicCoordinateDefersBeforeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	prov := &recordingProvider{name: "open-score", available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	result, err := eval.Evaluate(context.Background(), "yarn add myorg/private-repo@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for invalid public npm coordinate, got %s: %s", result.Decision, result.Reason)
+	}
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("invalid Yarn coordinate should defer before provider requests, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+	}
+}
+
+func TestEvaluate_OpenScoreYarnExportedRegistryStateDefersBeforeProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "open-score"
+	prov := &recordingProvider{name: "open-score", available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	result, err := eval.Evaluate(context.Background(), "export YARN_NPM_REGISTRY_SERVER=https://private.example/npm; yarn add @private/pkg@1.0.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Decision != api.Ask {
+		t.Fatalf("expected Ask for exported Yarn registry state, got %s: %s", result.Decision, result.Reason)
+	}
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("exported Yarn registry state should defer before provider requests, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
 	}
 }
 

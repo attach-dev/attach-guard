@@ -11,6 +11,7 @@ import (
 	"github.com/attach-dev/attach-guard/internal/parser/parseutil"
 	"github.com/attach-dev/attach-guard/internal/parser/pip"
 	"github.com/attach-dev/attach-guard/internal/parser/pnpm"
+	"github.com/attach-dev/attach-guard/internal/parser/yarn"
 	"github.com/attach-dev/attach-guard/pkg/api"
 )
 
@@ -37,14 +38,16 @@ func Parse(rawCommand string) *api.ParsedCommand {
 }
 
 type sourceOverrideContext struct {
-	pipNonLocal bool
-	goNonLocal  bool
+	pipNonLocal  bool
+	goNonLocal   bool
+	yarnNonLocal bool
 }
 
 func (c sourceOverrideContext) merge(other sourceOverrideContext) sourceOverrideContext {
 	return sourceOverrideContext{
-		pipNonLocal: c.pipNonLocal || other.pipNonLocal,
-		goNonLocal:  c.goNonLocal || other.goNonLocal,
+		pipNonLocal:  c.pipNonLocal || other.pipNonLocal,
+		goNonLocal:   c.goNonLocal || other.goNonLocal,
+		yarnNonLocal: c.yarnNonLocal || other.yarnNonLocal,
 	}
 }
 
@@ -75,11 +78,16 @@ func parseSegmentAllWithContext(tokens []string, rawCommand string, inherited so
 }
 
 func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourceOverrideContext, substitutionDepth int) []*api.ParsedCommand {
-	segments := commandSegments(tokens)
+	segments := commandSegmentsWithOperators(tokens)
 	if len(segments) > 1 {
 		var results []*api.ParsedCommand
-		for _, seg := range segments {
-			results = append(results, parseSegmentAllWithContext(seg, rawCommand, inherited, substitutionDepth)...)
+		for _, segment := range segments {
+			results = append(results, parseSegmentAllWithContext(segment.tokens, rawCommand, inherited, substitutionDepth)...)
+			// Source override cues such as `yarn config set registry ...` are durable shell state.
+			// Propagate them conservatively across later segments regardless of the
+			// immediate operator so represented custom sources cannot be masked by
+			// wrappers or pipelines.
+			inherited = inherited.merge(segmentSourceOverrideContext(segment.tokens))
 		}
 		return results
 	}
@@ -104,6 +112,12 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 		results = append(results, cmd)
 		return results
 	}
+	if cmd := yarn.Parse(tokens, rawCommand); cmd != nil {
+		applySourceOverrideContext(cmd, inherited)
+		applyShellTokenInfo(cmd, prepared)
+		results = append(results, cmd)
+		return results
+	}
 	if cmd := pip.Parse(tokens, rawCommand); cmd != nil {
 		applySourceOverrideContext(cmd, inherited)
 		applyShellTokenInfo(cmd, prepared)
@@ -122,6 +136,9 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 	}
 	if len(results) == 0 && tokensContainActiveCommandSubstitution(originalTokens) && looksLikeInstallTokens(originalTokens, substitutionDepth) {
 		results = append(results, suspiciousUnparsedInstall(strings.Join(originalTokens, " "), rawCommand))
+	}
+	if len(results) == 0 && looksLikeInstallTokensWithPMs(originalTokens, substitutionDepth, yarnPMBinaries) {
+		results = append(results, suspiciousUnparsedYarnInstall(rawCommand))
 	}
 	return results
 }
@@ -150,8 +167,14 @@ func parseAllWithDepth(command string, rawCommand string, substitutionDepth int)
 	}
 
 	var results []*api.ParsedCommand
-	for _, segment := range commandSegments(tokens) {
-		results = append(results, parseSegmentAllWithContext(segment, rawCommand, sourceOverrideContext{}, substitutionDepth)...)
+	inherited := sourceOverrideContext{}
+	for _, segment := range commandSegmentsWithOperators(tokens) {
+		results = append(results, parseSegmentAllWithContext(segment.tokens, rawCommand, inherited, substitutionDepth)...)
+		// Source override cues such as `yarn config set registry ...` are durable shell state.
+		// Propagate them conservatively across later segments regardless of the
+		// immediate operator so represented custom sources cannot be masked by
+		// wrappers or pipelines.
+		inherited = inherited.merge(segmentSourceOverrideContext(segment.tokens))
 	}
 	return results
 }
@@ -185,6 +208,17 @@ func suspiciousUnparsedInstall(inner string, rawCommand string) *api.ParsedComma
 	}
 }
 
+func suspiciousUnparsedYarnInstall(rawCommand string) *api.ParsedCommand {
+	return &api.ParsedCommand{
+		PackageManager:          "yarn",
+		Action:                  "add",
+		HasUnparsedArgs:         true,
+		HasNonLocalUnparsedArgs: true,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+	}
+}
+
 func suspiciousPackageManager(rawCommand string) string {
 	for _, segment := range commandSegments(tokenizeForParse(rawCommand)) {
 		stripped := stripRedirectionTokens(segment)
@@ -199,6 +233,10 @@ func suspiciousPackageManager(rawCommand string) string {
 }
 
 func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int) bool {
+	return commandSubstitutionsLookLikeInstallWithPMs(tokens, substitutionDepth, pmBinaries)
+}
+
+func commandSubstitutionsLookLikeInstallWithPMs(tokens []string, substitutionDepth int, pms map[string]bool) bool {
 	if substitutionDepth >= maxCommandSubstitutionDepth {
 		for _, tok := range tokens {
 			if hasActiveCommandSubstitution(tok) {
@@ -210,7 +248,7 @@ func commandSubstitutionsLookLikeInstall(tokens []string, substitutionDepth int)
 
 	for _, tok := range tokens {
 		for _, inner := range activeCommandSubstitutions(tok) {
-			if looksLikeInstallWithDepth(inner, substitutionDepth+1) {
+			if looksLikeInstallWithPMs(inner, substitutionDepth+1, pms) {
 				return true
 			}
 		}
@@ -243,6 +281,10 @@ var pmBinaries = map[string]bool{
 	"cargo": true,
 }
 
+var yarnPMBinaries = map[string]bool{
+	"yarn": true,
+}
+
 // LooksLikeInstall returns true if the raw command contains tokens that look
 // like a package manager install even though Parse() could not fully classify
 // it. This catches novel wrapper/prefix combinations that bypass structured
@@ -259,13 +301,25 @@ func LooksLikeInstall(rawCommand string) bool {
 }
 
 func looksLikeInstallWithDepth(rawCommand string, substitutionDepth int) bool {
+	return looksLikeInstallWithPMs(rawCommand, substitutionDepth, pmBinaries)
+}
+
+// LooksLikeYarnInstall returns true when a command looks like a Yarn install
+// form that the structured parser could not classify. It is intentionally
+// separate from LooksLikeInstall so default non-Open Score behavior does not
+// begin treating Yarn as a guarded package manager.
+func LooksLikeYarnInstall(rawCommand string) bool {
+	return looksLikeInstallWithPMs(rawCommand, 0, yarnPMBinaries)
+}
+
+func looksLikeInstallWithPMs(rawCommand string, substitutionDepth int, pms map[string]bool) bool {
 	tokens := tokenizeForParse(rawCommand)
 	for _, segment := range commandSegments(tokens) {
-		if commandSubstitutionsLookLikeInstall(segment, substitutionDepth) {
+		if commandSubstitutionsLookLikeInstallWithPMs(segment, substitutionDepth, pms) {
 			return true
 		}
 		stripped := stripRedirectionTokens(segment)
-		if looksLikeInstallTokens(stripped.tokens, substitutionDepth) {
+		if looksLikeInstallTokensWithPMs(stripped.tokens, substitutionDepth, pms) {
 			return true
 		}
 	}
@@ -390,6 +444,10 @@ func unwrapUVPipTokens(tokens []string) ([]string, bool) {
 // However, after a shell binary (bash/sh/zsh) without -c, remaining tokens are
 // treated as script arguments and NOT scanned for PM commands.
 func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
+	return looksLikeInstallTokensWithPMs(tokens, substitutionDepth, pmBinaries)
+}
+
+func looksLikeInstallTokensWithPMs(tokens []string, substitutionDepth int, pms map[string]bool) bool {
 	i := 0
 	for i < len(tokens) {
 		base := filepath.Base(tokens[i])
@@ -399,7 +457,10 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 		}
 
 		// PM binary found — check for install verb
-		if pmBinaries[base] {
+		if pms[base] {
+			if base == "yarn" {
+				return looksLikeYarnInstallArgs(tokens[i+1:])
+			}
 			for j := i + 1; j < len(tokens); j++ {
 				if installVerbs[tokens[j]] {
 					return true
@@ -452,7 +513,7 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 			// Any tokens after the command string are positional args ($0, $1),
 			// not commands, so stop scanning regardless of the result.
 			if i < len(tokens) {
-				return looksLikeInstallWithDepth(tokens[i], substitutionDepth+1)
+				return looksLikeInstallWithPMs(tokens[i], substitutionDepth+1, pms)
 			}
 			return false
 		}
@@ -472,7 +533,7 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 						}
 						inner := tokenizeForParse(tokens[i])
 						combined := append(inner, tokens[i+1:]...)
-						return looksLikeInstallTokens(stripRedirectionTokens(combined).tokens, substitutionDepth)
+						return looksLikeInstallTokensWithPMs(stripRedirectionTokens(combined).tokens, substitutionDepth, pms)
 					}
 					if envFlagTakesValue(tok) && i < len(tokens) {
 						i++
@@ -544,6 +605,66 @@ func looksLikeInstallTokens(tokens []string, substitutionDepth int) bool {
 		}
 	}
 	return false
+}
+
+func looksLikeYarnInstallArgs(args []string) bool {
+	for j := 0; j < len(args); j++ {
+		tok := args[j]
+		if installVerbs[tok] {
+			return true
+		}
+		if hasActiveCommandSubstitution(tok) {
+			return true
+		}
+		if strings.HasPrefix(tok, "-") {
+			if yarnHeuristicFlagConsumesValue(tok, args, j) {
+				j++
+			}
+			continue
+		}
+		switch tok {
+		case "global":
+			return yarnSubcommandArgsLookLikeAdd(args[j+1:])
+		case "workspace":
+			if j+1 >= len(args) {
+				return false
+			}
+			if hasActiveCommandSubstitution(args[j+1]) {
+				return true
+			}
+			return yarnSubcommandArgsLookLikeAdd(args[j+2:])
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func yarnSubcommandArgsLookLikeAdd(args []string) bool {
+	for j := 0; j < len(args); j++ {
+		tok := args[j]
+		if installVerbs[tok] {
+			return true
+		}
+		if hasActiveCommandSubstitution(tok) {
+			return true
+		}
+		if strings.HasPrefix(tok, "-") {
+			if yarnHeuristicFlagConsumesValue(tok, args, j) {
+				j++
+			}
+			continue
+		}
+		return false
+	}
+	return false
+}
+
+func yarnHeuristicFlagConsumesValue(flag string, args []string, idx int) bool {
+	return idx+1 < len(args) &&
+		!strings.Contains(flag, "=") &&
+		!strings.HasPrefix(args[idx+1], "-") &&
+		!installVerbs[args[idx+1]]
 }
 
 func dynamicCommandPositionLooksInstallLike(rest []string) bool {
@@ -801,6 +922,12 @@ func applySourceOverrideContext(cmd *api.ParsedCommand, ctx sourceOverrideContex
 			cmd.HasUnparsedArgs = true
 			cmd.HasNonLocalUnparsedArgs = true
 		}
+	case "yarn":
+		if ctx.yarnNonLocal {
+			cmd.Packages = nil
+			cmd.HasUnparsedArgs = true
+			cmd.HasNonLocalUnparsedArgs = true
+		}
 	}
 }
 
@@ -831,7 +958,130 @@ func recordSourceEnvAssignment(tok string, ctx *sourceOverrideContext) {
 		if !goProxyUsesPublicRegistryValue(value) {
 			ctx.goNonLocal = true
 		}
+	default:
+		recordYarnSourceEnvAssignment(key, value, ctx)
 	}
+}
+
+func recordYarnSourceEnvAssignment(key, value string, ctx *sourceOverrideContext) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+
+	recordYarnSourceEnvReference(key, ctx)
+}
+
+func recordYarnSourceEnvReference(key string, ctx *sourceOverrideContext) {
+	switch strings.ToUpper(key) {
+	case "NPM_CONFIG_REGISTRY",
+		"YARN_NPM_AUTH_TOKEN",
+		"YARN_NPM_CONFIG_REGISTRY",
+		"YARN_NPM_REGISTRY_SERVER",
+		"YARN_NPM_AUTH_IDENT",
+		"YARN_RC_FILENAME",
+		"YARN_REGISTRY":
+		ctx.yarnNonLocal = true
+	}
+}
+
+func exportedSourceOverrideContext(tokens []string) sourceOverrideContext {
+	stripped := stripRedirectionTokens(tokens)
+	if len(stripped.tokens) == 0 || filepath.Base(stripped.tokens[0]) != "export" {
+		return sourceOverrideContext{}
+	}
+
+	var ctx sourceOverrideContext
+	for _, tok := range stripped.tokens[1:] {
+		if tok == "--" || strings.HasPrefix(tok, "-") {
+			continue
+		}
+		if isEnvVarAssignment(tok) {
+			key, value, _ := strings.Cut(tok, "=")
+			recordYarnSourceEnvAssignment(key, value, &ctx)
+			continue
+		}
+		recordYarnSourceEnvReference(tok, &ctx)
+	}
+	return ctx
+}
+
+func segmentSourceOverrideContext(tokens []string) sourceOverrideContext {
+	return exportedSourceOverrideContext(tokens).merge(representedSourceOverrideContext(tokens))
+}
+
+func representedSourceOverrideContext(tokens []string) sourceOverrideContext {
+	stripped := stripRedirectionTokens(tokens)
+	if len(stripped.tokens) == 0 {
+		return sourceOverrideContext{}
+	}
+
+	unwrapped := unwrapPrefixes(stripped.tokens)
+	if len(unwrapped.tokens) == 0 {
+		return sourceOverrideContext{}
+	}
+
+	prepared := prepareParserTokens(unwrapped.tokens)
+	for _, segment := range commandSegments(prepared.tokens) {
+		if yarnRegistryConfigMutation(segment) {
+			return sourceOverrideContext{yarnNonLocal: true}
+		}
+	}
+	return sourceOverrideContext{}
+}
+
+func yarnRegistryConfigMutation(tokens []string) bool {
+	for start := 0; start < len(tokens); start++ {
+		if filepath.Base(tokens[start]) != "yarn" {
+			continue
+		}
+		if yarnRegistryConfigMutationFromYarn(tokens[start:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func yarnRegistryConfigMutationFromYarn(tokens []string) bool {
+	if len(tokens) < 5 {
+		return false
+	}
+
+	i := 1
+	for i < len(tokens) && strings.HasPrefix(tokens[i], "-") {
+		flag := tokens[i]
+		i++
+		if yarnConfigFlagTakesValue(flag) && i < len(tokens) {
+			i++
+		}
+	}
+	if i+3 >= len(tokens) {
+		return false
+	}
+	if tokens[i] != "config" || tokens[i+1] != "set" {
+		return false
+	}
+	return yarnRegistryConfigKey(tokens[i+2]) && strings.TrimSpace(tokens[i+3]) != ""
+}
+
+func yarnConfigFlagTakesValue(flag string) bool {
+	name := flag
+	if parsedName, _, ok := parseutil.SplitLongFlagAssignment(flag); ok {
+		name = parsedName
+	}
+	switch name {
+	case "--cwd", "--mutex", "--use-yarnrc":
+		return !strings.Contains(flag, "=")
+	default:
+		return false
+	}
+}
+
+func yarnRegistryConfigKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "-", ""), "_", ""))
+	return normalized == "registry" ||
+		normalized == "npmregistryserver" ||
+		strings.HasSuffix(normalized, ".npmregistryserver") ||
+		strings.Contains(normalized, "registry")
 }
 
 func goProxyUsesPublicRegistryValue(raw string) bool {
@@ -855,16 +1105,33 @@ func goProxyUsesPublicRegistryValue(raw string) bool {
 	return false
 }
 
+type commandSegment struct {
+	tokens        []string
+	operatorAfter string
+}
+
 // commandSegments splits tokens at shell operators into separate command segments.
 // For example, ["ls", "&&", "npm", "install", "axios"] returns [["ls"], ["npm", "install", "axios"]].
 // Also handles trailing semicolons attached to tokens (e.g., "axios;" becomes "axios" ending a segment).
 func commandSegments(tokens []string) [][]string {
-	var segments [][]string
+	segmentsWithOperators := commandSegmentsWithOperators(tokens)
+	segments := make([][]string, 0, len(segmentsWithOperators))
+	for _, segment := range segmentsWithOperators {
+		segments = append(segments, segment.tokens)
+	}
+	return segments
+}
+
+func commandSegmentsWithOperators(tokens []string) []commandSegment {
+	var segments []commandSegment
 	start := 0
 	for i, tok := range tokens {
 		if shellOperators[tok] {
 			if i > start {
-				segments = append(segments, tokens[start:i])
+				segments = append(segments, commandSegment{
+					tokens:        tokens[start:i],
+					operatorAfter: tok,
+				})
 			}
 			start = i + 1
 			continue
@@ -873,12 +1140,17 @@ func commandSegments(tokens []string) [][]string {
 			seg := make([]string, i-start+1)
 			copy(seg, tokens[start:i])
 			seg[i-start] = strings.TrimSuffix(tok, ";")
-			segments = append(segments, seg)
+			segments = append(segments, commandSegment{
+				tokens:        seg,
+				operatorAfter: ";",
+			})
 			start = i + 1
 		}
 	}
 	if start < len(tokens) {
-		segments = append(segments, tokens[start:])
+		segments = append(segments, commandSegment{
+			tokens: tokens[start:],
+		})
 	}
 	return segments
 }
