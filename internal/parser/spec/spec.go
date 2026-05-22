@@ -62,3 +62,38 @@ func IsExactVersion(version string) bool {
 
 	return true
 }
+
+// IsPublicNPMPackageName reports whether name has the public npm package-name
+// shape used by registry coordinates. It accepts unscoped names and
+// @scope/name, but rejects hosted/path-like forms such as owner/repo.
+func IsPublicNPMPackageName(name string) bool {
+	if name == "" || len(name) > 214 {
+		return false
+	}
+
+	if strings.HasPrefix(name, "@") {
+		parts := strings.Split(name[1:], "/")
+		return len(parts) == 2 && validNPMPackageNamePart(parts[0]) && validNPMPackageNamePart(parts[1])
+	}
+
+	if strings.Contains(name, "/") {
+		return false
+	}
+	return validNPMPackageNamePart(name)
+}
+
+func validNPMPackageNamePart(part string) bool {
+	if part == "" || strings.HasPrefix(part, ".") || strings.HasPrefix(part, "_") {
+		return false
+	}
+	for _, r := range part {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
