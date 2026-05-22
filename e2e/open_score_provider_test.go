@@ -21,7 +21,7 @@ import (
 
 func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *testing.T) {
 	eval, auditPath := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !validateOpenScoreCoordinateRequest(t, r, "safe-pkg", "1.0.0") {
+		if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, "safe-pkg", "1.0.0") {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
@@ -59,6 +59,158 @@ func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *tes
 	}
 	assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, api.ProviderVerdictAllow, 3, "HIGH", "low-risk-synthetic", "osv:synthetic-safe-0001")
 	assertNoRawOpenScoreSourceDump(t, entry)
+}
+
+func TestE2E_OpenScoreHTTPProviderPreservesMultiEcosystemIdentityAndProvenance(t *testing.T) {
+	tests := []struct {
+		name             string
+		command          string
+		wantPM           string
+		wantRequestEco   api.Ecosystem
+		wantResultEco    api.Ecosystem
+		wantPackageName  string
+		wantVersion      string
+		providerDecision api.ProviderVerdictDecision
+		wantDecision     api.Decision
+		riskScore        int
+		confidence       string
+		reason           string
+		sourceRef        string
+	}{
+		{
+			name:             "npm install",
+			command:          "npm install npm-demo@1.0.0",
+			wantPM:           "npm",
+			wantRequestEco:   api.EcosystemNPM,
+			wantResultEco:    api.EcosystemNPM,
+			wantPackageName:  "npm-demo",
+			wantVersion:      "1.0.0",
+			providerDecision: api.ProviderVerdictAllow,
+			wantDecision:     api.Allow,
+			riskScore:        2,
+			confidence:       "HIGH",
+			reason:           "npm-low-risk-synthetic",
+			sourceRef:        "osv:synthetic-npm-0001",
+		},
+		{
+			name:             "pnpm add",
+			command:          "pnpm add pnpm-demo@2.0.0",
+			wantPM:           "pnpm",
+			wantRequestEco:   api.EcosystemNPM,
+			wantResultEco:    api.EcosystemPNPM,
+			wantPackageName:  "pnpm-demo",
+			wantVersion:      "2.0.0",
+			providerDecision: api.ProviderVerdictAsk,
+			wantDecision:     api.Ask,
+			riskScore:        41,
+			confidence:       "MEDIUM",
+			reason:           "pnpm-review-synthetic",
+			sourceRef:        "deps.dev:synthetic-pnpm-0001",
+		},
+		{
+			name:             "pip install",
+			command:          "pip install flask==3.0.0",
+			wantPM:           "pip",
+			wantRequestEco:   api.EcosystemPyPI,
+			wantResultEco:    api.EcosystemPyPI,
+			wantPackageName:  "flask",
+			wantVersion:      "3.0.0",
+			providerDecision: api.ProviderVerdictUnknown,
+			wantDecision:     api.Ask,
+			riskScore:        50,
+			confidence:       "LOW",
+			reason:           "pypi-insufficient-evidence-synthetic",
+			sourceRef:        "osv:synthetic-pypi-0001",
+		},
+		{
+			name:             "cargo install",
+			command:          "cargo install ripgrep --version 14.0.0",
+			wantPM:           "cargo",
+			wantRequestEco:   api.EcosystemCargo,
+			wantResultEco:    api.EcosystemCargo,
+			wantPackageName:  "ripgrep",
+			wantVersion:      "14.0.0",
+			providerDecision: api.ProviderVerdictAllow,
+			wantDecision:     api.Allow,
+			riskScore:        7,
+			confidence:       "HIGH",
+			reason:           "cargo-low-risk-synthetic",
+			sourceRef:        "registry:synthetic-cargo-0001",
+		},
+		{
+			name:             "go install",
+			command:          "go install golang.org/x/tools/cmd/godoc@v0.20.0",
+			wantPM:           "go",
+			wantRequestEco:   api.EcosystemGo,
+			wantResultEco:    api.EcosystemGo,
+			wantPackageName:  "golang.org/x/tools/cmd/godoc",
+			wantVersion:      "v0.20.0",
+			providerDecision: api.ProviderVerdictAsk,
+			wantDecision:     api.Ask,
+			riskScore:        37,
+			confidence:       "MEDIUM",
+			reason:           "go-review-synthetic",
+			sourceRef:        "deps.dev:synthetic-go-0001",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seenRequest := make(chan struct{}, 1)
+			eval, auditPath := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case seenRequest <- struct{}{}:
+				default:
+				}
+				if !validateOpenScoreCoordinateRequest(t, r, tt.wantRequestEco, tt.wantPackageName, tt.wantVersion) {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				writeOpenScoreObjectVerdict(t, w, tt.providerDecision, tt.riskScore, tt.confidence, tt.reason, tt.sourceRef)
+			}))
+
+			data, err := eval.EvaluateJSON(context.Background(), tt.command, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-seenRequest:
+			default:
+				t.Fatal("Open Score test provider did not receive a request")
+			}
+
+			var result api.EvaluationResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != tt.wantDecision {
+				t.Fatalf("expected explain decision %s, got %s: %s", tt.wantDecision, result.Decision, result.Reason)
+			}
+			if len(result.Packages) != 1 {
+				t.Fatalf("expected one explain package, got %d", len(result.Packages))
+			}
+			assertOpenScorePackage(t, result.Packages[0], tt.wantResultEco, tt.wantPackageName, tt.wantVersion)
+			assertOpenScoreVerdict(t, result.Packages[0].ProviderVerdict, tt.providerDecision, tt.riskScore, tt.confidence, tt.reason, tt.sourceRef)
+			assertNoRawOpenScoreSourceDump(t, result)
+
+			entry := readOpenScoreAuditEntry(t, auditPath)
+			if entry.PackageManager != tt.wantPM {
+				t.Fatalf("expected audit package manager %q, got %q", tt.wantPM, entry.PackageManager)
+			}
+			if entry.Provider != "open-score" {
+				t.Fatalf("expected audit provider open-score, got %q", entry.Provider)
+			}
+			if entry.Decision != tt.wantDecision {
+				t.Fatalf("expected audit decision %s, got %s", tt.wantDecision, entry.Decision)
+			}
+			if len(entry.Packages) != 1 {
+				t.Fatalf("expected one audit package, got %d", len(entry.Packages))
+			}
+			assertOpenScorePackage(t, entry.Packages[0], tt.wantResultEco, tt.wantPackageName, tt.wantVersion)
+			assertOpenScoreVerdict(t, entry.Packages[0].ProviderVerdict, tt.providerDecision, tt.riskScore, tt.confidence, tt.reason, tt.sourceRef)
+			assertNoRawOpenScoreSourceDump(t, entry)
+		})
+	}
 }
 
 func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
@@ -107,7 +259,7 @@ func TestE2E_OpenScoreHTTPProviderDenyAndAskDriveLocalDecisions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			eval, auditPath := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !validateOpenScoreCoordinateRequest(t, r, tt.pkg, "1.0.0") {
+				if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, tt.pkg, "1.0.0") {
 					http.Error(w, "bad request", http.StatusBadRequest)
 					return
 				}
@@ -149,7 +301,7 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskLocallyWithProviderUnavailableVerdi
 
 	t.Run("non 2xx", func(t *testing.T) {
 		eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !validateOpenScoreCoordinateRequest(t, r, "status-pkg", "1.0.0") {
+			if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, "status-pkg", "1.0.0") {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -160,7 +312,7 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskLocallyWithProviderUnavailableVerdi
 
 	t.Run("malformed response", func(t *testing.T) {
 		eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !validateOpenScoreCoordinateRequest(t, r, "malformed-pkg", "1.0.0") {
+			if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, "malformed-pkg", "1.0.0") {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -172,7 +324,7 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskLocallyWithProviderUnavailableVerdi
 
 	t.Run("timeout", func(t *testing.T) {
 		eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !validateOpenScoreCoordinateRequest(t, r, "timeout-pkg", "1.0.0") {
+			if !validateOpenScoreCoordinateRequest(t, r, api.EcosystemNPM, "timeout-pkg", "1.0.0") {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
@@ -181,6 +333,65 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskLocallyWithProviderUnavailableVerdi
 		}))
 		assertOpenScoreProviderFailureAsks(t, eval, "timeout-pkg")
 	})
+}
+
+func TestE2E_OpenScoreHTTPProviderFailuresAskAcrossPackageManagers(t *testing.T) {
+	tests := []struct {
+		name            string
+		command         string
+		wantRequestEco  api.Ecosystem
+		wantPackageName string
+		wantVersion     string
+	}{
+		{
+			name:            "npm",
+			command:         "npm install outage-npm@1.0.0",
+			wantRequestEco:  api.EcosystemNPM,
+			wantPackageName: "outage-npm",
+			wantVersion:     "1.0.0",
+		},
+		{
+			name:            "pnpm",
+			command:         "pnpm add outage-pnpm@1.0.0",
+			wantRequestEco:  api.EcosystemNPM,
+			wantPackageName: "outage-pnpm",
+			wantVersion:     "1.0.0",
+		},
+		{
+			name:            "pip",
+			command:         "pip install outage-pypi==1.0.0",
+			wantRequestEco:  api.EcosystemPyPI,
+			wantPackageName: "outage-pypi",
+			wantVersion:     "1.0.0",
+		},
+		{
+			name:            "cargo",
+			command:         "cargo install outage-cargo --version 1.0.0",
+			wantRequestEco:  api.EcosystemCargo,
+			wantPackageName: "outage-cargo",
+			wantVersion:     "1.0.0",
+		},
+		{
+			name:            "go",
+			command:         "go install example.com/outage/cmd/tool@v1.0.0",
+			wantRequestEco:  api.EcosystemGo,
+			wantPackageName: "example.com/outage/cmd/tool",
+			wantVersion:     "v1.0.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eval, _ := newOpenScoreHTTPEvaluator(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !validateOpenScoreCoordinateRequest(t, r, tt.wantRequestEco, tt.wantPackageName, tt.wantVersion) {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				http.Error(w, "synthetic unavailable", http.StatusServiceUnavailable)
+			}))
+			assertOpenScoreProviderFailureCommandAsks(t, eval, tt.command)
+		})
+	}
 }
 
 func newOpenScoreHTTPEvaluator(t *testing.T, handler http.Handler) (*cli.Evaluator, string) {
@@ -274,7 +485,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-func validateOpenScoreCoordinateRequest(t *testing.T, r *http.Request, wantName, wantVersion string) bool {
+func validateOpenScoreCoordinateRequest(t *testing.T, r *http.Request, wantEcosystem api.Ecosystem, wantName, wantVersion string) bool {
 	t.Helper()
 
 	ok := true
@@ -290,7 +501,7 @@ func validateOpenScoreCoordinateRequest(t *testing.T, r *http.Request, wantName,
 	}
 
 	want := map[string]string{
-		"ecosystem": string(api.EcosystemNPM),
+		"ecosystem": string(wantEcosystem),
 		"name":      wantName,
 		"version":   wantVersion,
 	}
@@ -384,6 +595,20 @@ func assertOpenScoreVerdict(t *testing.T, verdict *api.ProviderVerdict, decision
 	}
 }
 
+func assertOpenScorePackage(t *testing.T, pkg api.PackageEvaluation, ecosystem api.Ecosystem, name, version string) {
+	t.Helper()
+
+	if pkg.Ecosystem != ecosystem {
+		t.Fatalf("expected package ecosystem %q, got %q", ecosystem, pkg.Ecosystem)
+	}
+	if pkg.Name != name {
+		t.Fatalf("expected package name %q, got %q", name, pkg.Name)
+	}
+	if pkg.SelectedVersion != version {
+		t.Fatalf("expected selected version %q, got %q", version, pkg.SelectedVersion)
+	}
+}
+
 func assertNoRawOpenScoreSourceDump(t *testing.T, value interface{}) {
 	t.Helper()
 
@@ -395,6 +620,10 @@ func assertNoRawOpenScoreSourceDump(t *testing.T, value interface{}) {
 		"synthetic-upstream-source",
 		"SYNTHETIC-UPSTREAM-0001",
 		"Synthetic fixture.",
+		"source_ref_ids",
+		"license_or_terms_url",
+		"redistribution",
+		"public_display",
 	} {
 		if strings.Contains(string(data), unexpected) {
 			t.Fatalf("expected output to omit raw Open Score source object details %q, got %s", unexpected, data)
@@ -405,7 +634,13 @@ func assertNoRawOpenScoreSourceDump(t *testing.T, value interface{}) {
 func assertOpenScoreProviderFailureAsks(t *testing.T, eval *cli.Evaluator, pkg string) {
 	t.Helper()
 
-	result, err := eval.Evaluate(context.Background(), "npm install "+pkg+"@1.0.0", api.ModeShell)
+	assertOpenScoreProviderFailureCommandAsks(t, eval, "npm install "+pkg+"@1.0.0")
+}
+
+func assertOpenScoreProviderFailureCommandAsks(t *testing.T, eval *cli.Evaluator, command string) {
+	t.Helper()
+
+	result, err := eval.Evaluate(context.Background(), command, api.ModeShell)
 	if err != nil {
 		t.Fatal(err)
 	}
