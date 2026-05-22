@@ -61,7 +61,7 @@ func TestE2E_OpenScoreHTTPProviderAllowPreservesEvaluationAndAuditVerdict(t *tes
 	assertNoRawOpenScoreSourceDump(t, entry)
 }
 
-func TestE2E_OpenScoreHTTPProviderPreservesMultiEcosystemIdentityAndProvenance(t *testing.T) {
+func TestE2E_OpenScoreLocalDogfoodMatrixPreservesIdentityAndProvenance(t *testing.T) {
 	tests := []struct {
 		name             string
 		command          string
@@ -106,6 +106,21 @@ func TestE2E_OpenScoreHTTPProviderPreservesMultiEcosystemIdentityAndProvenance(t
 			confidence:       "MEDIUM",
 			reason:           "pnpm-review-synthetic",
 			sourceRef:        "deps.dev:synthetic-pnpm-0001",
+		},
+		{
+			name:             "yarn add opt-in",
+			command:          "yarn add react@18.2.0",
+			wantPM:           "yarn",
+			wantRequestEco:   api.EcosystemNPM,
+			wantResultEco:    api.EcosystemNPM,
+			wantPackageName:  "react",
+			wantVersion:      "18.2.0",
+			providerDecision: api.ProviderVerdictAllow,
+			wantDecision:     api.Allow,
+			riskScore:        2,
+			confidence:       "HIGH",
+			reason:           "yarn-public-synthetic",
+			sourceRef:        "osv:synthetic-yarn-safe-0001",
 		},
 		{
 			name:             "pip install",
@@ -466,6 +481,13 @@ func TestE2E_OpenScoreHTTPProviderFailuresAskAcrossPackageManagers(t *testing.T)
 			command:         "pnpm add outage-pnpm@1.0.0",
 			wantRequestEco:  api.EcosystemNPM,
 			wantPackageName: "outage-pnpm",
+			wantVersion:     "1.0.0",
+		},
+		{
+			name:            "yarn opt-in",
+			command:         "yarn add outage-yarn@1.0.0",
+			wantRequestEco:  api.EcosystemNPM,
+			wantPackageName: "outage-yarn",
 			wantVersion:     "1.0.0",
 		},
 		{
