@@ -39,6 +39,19 @@ These tests are the safest public way to dogfood the current Attach Open Score s
 go test ./internal/policy ./internal/versionselect ./internal/cli ./e2e -run 'OpenScore|ProviderVerdict|Unknown|ProviderUnavailable|ProviderOutage'
 ```
 
+Or run the checked smoke helper, which uses only synthetic local tests, redirects
+`HOME` and focused-smoke audit output under a temporary directory, preserves the
+current Go module/build caches to avoid unnecessary downloads, unsets local
+provider overrides, and unsets `SOCKET_API_TOKEN` so it cannot accidentally
+exercise the BYO Socket provider path:
+
+```bash
+scripts/local-open-score-dogfood.sh
+```
+
+Set `ATTACH_GUARD_DOGFOOD_FULL=1` to run `go test ./...` after the focused
+smoke target.
+
 What this covers:
 
 - A local `httptest` Attach Open Score-compatible HTTP server can drive the configured `provider.kind: open-score` evaluator path without real network access.
