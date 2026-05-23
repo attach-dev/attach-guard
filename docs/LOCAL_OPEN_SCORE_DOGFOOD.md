@@ -50,6 +50,25 @@ What this covers:
 - Open Score confidence, reasons, and `source_refs` survive into evaluation and audit-visible structures.
 - Unpinned-version selection preserves Open Score-style verdict reasons when it suggests or rejects candidate versions.
 
+The consolidated e2e matrix lives in
+`TestE2E_OpenScoreLocalDogfoodMatrixPreservesIdentityAndProvenance` and uses
+only synthetic fixtures against an explicitly configured local test endpoint:
+
+| Flow | Fixture command | Open Score request ecosystem | Expected local behavior |
+|---|---|---|---|
+| npm | `npm install npm-demo@1.0.0` | `npm` | `ALLOW` fixture allows |
+| pnpm | `pnpm add pnpm-demo@2.0.0` | `npm` | `ASK` fixture asks |
+| Yarn opt-in | `yarn add react@18.2.0` | `npm` | `ALLOW` fixture allows only when `provider.kind: open-score` is explicit |
+| pip | `pip install flask==3.0.0` | `pypi` | `UNKNOWN` fixture asks locally |
+| Cargo | `cargo install ripgrep --version 14.0.0` | `cargo` | `ALLOW` fixture allows |
+| Go | `go install golang.org/x/tools/cmd/godoc@v0.20.0` | `go` | `ASK` fixture asks |
+
+Adjacent regression tests keep the safety boundaries visible: provider outage
+fixtures ask locally across the same package-manager families, private/custom
+Yarn source shapes ask before any Open Score request is made, and default
+Socket compatibility tests prove Yarn does not become guarded unless the
+Open Score provider is explicitly selected.
+
 Then run the full suite before sending a docs PR:
 
 ```bash
