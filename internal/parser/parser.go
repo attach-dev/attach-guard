@@ -436,6 +436,127 @@ func unwrapUVPipTokens(tokens []string) ([]string, bool) {
 	return nil, false
 }
 
+func unwrapPythonModulePipTokens(tokens []string) ([]string, bool) {
+	if len(tokens) < 3 || !isPythonBinary(filepath.Base(tokens[0])) {
+		return nil, false
+	}
+
+	rest := tokens[1:]
+	for len(rest) > 0 {
+		consumed, module, foundModule, ok := consumePythonInterpreterArg(rest)
+		if !ok {
+			return nil, false
+		}
+		if !foundModule {
+			rest = rest[consumed:]
+			continue
+		}
+		if module != "pip" {
+			return nil, false
+		}
+		return append([]string{"pip"}, rest[consumed:]...), true
+	}
+
+	return nil, false
+}
+
+func consumePythonInterpreterArg(tokens []string) (consumed int, module string, foundModule bool, ok bool) {
+	if len(tokens) == 0 {
+		return 0, "", false, false
+	}
+	tok := tokens[0]
+	if tok == "-m" {
+		if len(tokens) < 2 {
+			return 0, "", false, false
+		}
+		return 2, tokens[1], true, true
+	}
+	if strings.HasPrefix(tok, "--") {
+		return consumePythonLongInterpreterFlag(tokens)
+	}
+	if !strings.HasPrefix(tok, "-") || tok == "-" {
+		return 0, "", false, false
+	}
+
+	chars := tok[1:]
+	for i := 0; i < len(chars); i++ {
+		switch chars[i] {
+		case 'm':
+			module := chars[i+1:]
+			if module != "" {
+				return 1, module, true, true
+			}
+			if len(tokens) < 2 {
+				return 0, "", false, false
+			}
+			return 2, tokens[1], true, true
+		case 'W', 'X':
+			if i+1 < len(chars) {
+				return 1, "", false, true
+			}
+			if len(tokens) < 2 {
+				return 0, "", false, false
+			}
+			return 2, "", false, true
+		case 'c', 'h', '?', 'V':
+			return 0, "", false, false
+		default:
+			if !isPythonNoValueShortFlag(chars[i]) {
+				return 0, "", false, false
+			}
+		}
+	}
+	return 1, "", false, true
+}
+
+func consumePythonLongInterpreterFlag(tokens []string) (consumed int, module string, foundModule bool, ok bool) {
+	tok := tokens[0]
+	if tok == "--check-hash-based-pycs" {
+		if len(tokens) < 2 || !isPythonHashPycsMode(tokens[1]) {
+			return 0, "", false, false
+		}
+		return 2, "", false, true
+	}
+	return 0, "", false, false
+}
+
+func isPythonHashPycsMode(value string) bool {
+	switch value {
+	case "default", "always", "never":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPythonNoValueShortFlag(ch byte) bool {
+	switch ch {
+	case 'b', 'B', 'd', 'E', 'i', 'I', 'O', 'P', 'q', 's', 'S', 'u', 'v', 'x':
+		return true
+	default:
+		return false
+	}
+}
+
+func isPythonBinary(base string) bool {
+	if base == "python" || base == "python3" {
+		return true
+	}
+	if !strings.HasPrefix(base, "python3.") {
+		return false
+	}
+	version := strings.TrimPrefix(base, "python3.")
+	if version == "" {
+		return false
+	}
+	for _, r := range version {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // looksLikeInstallTokens checks if a flat token list contains a PM binary
 // followed by an install verb in a plausible command position.
 //
@@ -558,6 +679,17 @@ func looksLikeInstallTokensWithPMs(tokens []string, substitutionDepth int, pms m
 				continue
 			}
 			// Not "uv pip ..." — not a guarded command
+			return false
+		}
+
+		// python -m pip install ... — only the pip module form is guarded.
+		if isPythonBinary(base) {
+			rest, ok := unwrapPythonModulePipTokens(tokens[i:])
+			if ok {
+				tokens = rest
+				i = 0
+				continue
+			}
 			return false
 		}
 
@@ -838,6 +970,18 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 			// active command substitutions in ignored uv argv for fail-closed checks.
 			result.discarded = append(result.discarded, result.tokens...)
 			result.tokens = nil
+			return result
+		}
+
+		// python -m pip install ... — strip the interpreter/module wrapper so
+		// existing pip parsing and policy evaluation apply unchanged. Other
+		// python -m module invocations are not guarded install commands.
+		if isPythonBinary(base) {
+			if rest, ok := unwrapPythonModulePipTokens(result.tokens); ok {
+				result.discarded = append(result.discarded, result.tokens[:len(result.tokens)-len(rest)]...)
+				result.tokens = rest
+				continue
+			}
 			return result
 		}
 

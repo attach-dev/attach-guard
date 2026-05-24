@@ -13,7 +13,7 @@ Claude Code installs packages on your behalf — often without you reviewing eac
 attach-guard is a Claude Code plugin that intercepts package installation commands and evaluates them against policy **before execution**. It is not an advisory scanner. It is a hard enforcement boundary.
 
 - Installs as a Claude Code plugin — no manual hook configuration needed
-- Intercepts `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands via PreToolUse hooks
+- Intercepts `npm install`, `pnpm add`, direct `pip` / `pip3 install`, `python -m pip install` / `python3 -m pip install` wrappers, `uv pip install`, `go get` / `go install`, and `cargo add` / `cargo install` commands via PreToolUse hooks
 - Evaluates packages with the configured provider before install commands run
 - Supports explicit provider configuration, including Attach Open Score-compatible verdict endpoints and local BYO-token providers
 - Denies known malware and high-confidence dangerous packages automatically
@@ -73,6 +73,8 @@ This works across all supported ecosystems — the rewrite uses the native pinni
 | Go | `go get golang.org/x/net` | `go get golang.org/x/net@v0.25.0` |
 | Cargo | `cargo add serde` | `cargo add serde@=1.0.200` |
 
+Supported pip wrappers such as `python -m pip install`, `python -I -m pip install`, and `uv pip install` are evaluated before execution. If a wrapped pip command needs a safe-version rewrite, attach-guard asks for manual review instead of rewriting the wrapper command.
+
 Your flow only fully stops when there is genuinely no safe version to offer.
 
 ## Why a Hook, Not a Skill or MCP
@@ -114,7 +116,7 @@ During installation or enablement, the current local BYO-token provider path may
 The prebuilt binary is downloaded automatically for your platform. The hook, config, and skill are all registered — no further setup needed.
 
 Once running, the plugin provides:
-- **Automatic enforcement** — direct `npm install`, `pnpm add`, `pip install`, `go get`, and `cargo add` commands are intercepted and checked
+- **Automatic enforcement** — `npm install`, `pnpm add`, direct and `python -m pip` / `uv pip` forms of `pip install`, `go get` / `go install`, and `cargo add` / `cargo install` commands are intercepted and checked
 - **`/explain <package>`** — look up any package's risk score, alerts, and version history
 
 #### Local development (from source)
@@ -225,7 +227,7 @@ Claude: I'll install axios.
 
 ## How It Works
 
-When Claude Code calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
+When Claude Code calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `python -I -m pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
 
 1. Claude Code fires the PreToolUse hook before execution
 2. The hook pipes the tool input JSON to `attach-guard hook` via stdin
@@ -257,6 +259,7 @@ attach-guard evaluate npm install axios@1.14.1
 # pip
 attach-guard evaluate pip install litellm
 attach-guard evaluate pip install litellm==1.82.8
+attach-guard evaluate python -I -m pip install litellm
 
 # Go
 attach-guard evaluate go get golang.org/x/net
@@ -357,11 +360,12 @@ Highest priority wins (later sources override earlier):
 
 ### Unpinned version handling
 
-When you run an unpinned supported command such as `npm install axios`, `pip install requests`, `go get golang.org/x/net`, or `cargo add serde`:
+When you run an unpinned supported command such as `npm install axios`, `pip install requests`, `python -m pip install requests`, `go get golang.org/x/net`, or `cargo add serde`:
 - attach-guard fetches candidate versions from the configured provider and evaluates them against policy
 - If the latest passes policy, the command runs as-is
-- If the latest fails but an older version passes, attach-guard suggests a rewrite using ecosystem-native syntax
-- In Claude Code mode: returns `ask` with the rewritten command via `updatedInput`
+- If the latest fails but an older version passes, direct package-manager command shapes get a rewrite suggestion using ecosystem-native syntax
+- In Claude Code mode, direct rewrites return `ask` with the rewritten command via `updatedInput`
+- Wrapped pip commands are evaluated, but wrapper-preserving rewrites are not emitted yet; commands such as `python -m pip install requests` or `uv pip install requests` ask for manual review when a rewrite would be required
 - If no version passes, denies
 
 Attach Open Score integration should be verdict-first: `ALLOW` → allow, `ASK` → ask, `DENY` → deny, and `UNKNOWN` → ask/warn locally by default. CI/team policy may map unknowns to deny by explicit configuration. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md).
@@ -409,8 +413,9 @@ Provider calls can fail when a local BYO-token account is unavailable, rate-limi
 
 ## Current Limitations
 
-- Direct `pip` / `pip3` (including `uv pip`), `go get` / `go install`, and `cargo add` / `cargo install` are supported; `python -m pip` remains passthrough for now
-- pip extras/range specs, Cargo requirement syntax, and non-semver Go queries are intentionally passed through for manual review rather than being auto-evaluated
+- Direct `pip` / `pip3`, `python -m pip` / `python3 -m pip` wrappers with safe interpreter flags before `-m`, `uv pip`, `go get` / `go install`, and `cargo add` / `cargo install` are supported
+- Rewrites are emitted only for direct package-manager command shapes; wrapped pip commands are evaluated but ask for manual review when a safe-version rewrite is needed
+- `uv add` / `uv sync`, pip extras/range/constraint-aware handling, Cargo requirement syntax, and non-semver Go queries are intentionally deferred to manual review rather than being auto-evaluated
 - Hosted/default Attach scoring is planned; today, Attach Open Score-compatible verdicts require explicit `open-score` endpoint configuration
 - Local BYO-token providers can be affected by upstream availability, rate limits, or quota during evaluation and version rewrite
 - No transitive dependency analysis
