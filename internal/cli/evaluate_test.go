@@ -683,6 +683,7 @@ func TestEvaluate_CommandNeedingRewriteButNotSafelyRewritableAsks(t *testing.T) 
 		"echo hello && npm install new-pkg",
 		"env NODE_ENV=production npm install new-pkg",
 		"sudo npm install new-pkg",
+		"python -I -m pip install new-pkg",
 	}
 
 	eval := NewEvaluator(cfg, mock)
@@ -760,7 +761,6 @@ func TestEvaluate_LocalRecognizedButNotGuardedCommandsAllow(t *testing.T) {
 		"go install .",
 		"cargo add --path ./local-crate",
 		"cargo install --path ./local-crate",
-		"python -m pip install requests",
 	}
 
 	eval := NewEvaluator(cfg, mock)
@@ -831,6 +831,10 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		"pip install git+https://github.com/user/repo.git",
 		"pip install 'requests>=2.0'",
 		"pip install requests[security]",
+		"python -m pip install 'requests>=2.0'",
+		"python3 -m pip install requests[security]",
+		"python -I -m pip install 'requests>=2.0'",
+		"python3 -s -m pip install requests[security]",
 		"pip install requests --index-url https://custom.pypi.org/simple",
 		"pip install requests --index-url=https://custom.pypi.org/simple",
 		"pip install requests --extra-index-url https://custom.pypi.org/simple",
@@ -860,6 +864,87 @@ func TestEvaluate_NonLocalUnparsedCommandsAsk(t *testing.T) {
 		if result.RewrittenCommand != "" {
 			t.Errorf("expected no rewrite for %q, got %q", cmd, result.RewrittenCommand)
 		}
+	}
+}
+
+func TestEvaluate_PythonModulePipMatchesDirectPip(t *testing.T) {
+	cfg := config.DefaultConfig()
+	mock := provider.NewMockProvider()
+	mock.AddScore("requests", "2.31.0", 92, 90)
+
+	eval := NewEvaluator(cfg, mock)
+	direct, err := eval.Evaluate(context.Background(), "pip install requests==2.31.0", api.ModeShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if direct.Decision != api.Allow {
+		t.Fatalf("direct pip decision = %s, want Allow: %s", direct.Decision, direct.Reason)
+	}
+
+	tests := []string{
+		"python -m pip install requests==2.31.0",
+		"python3 -m pip install requests==2.31.0",
+		"python3.11 -m pip install requests==2.31.0",
+		"python -I -m pip install requests==2.31.0",
+		"python3 -s -m pip install requests==2.31.0",
+		"python -X dev -W ignore -m pip install requests==2.31.0",
+		"python --check-hash-based-pycs default -m pip install requests==2.31.0",
+		"python -BIm pip install requests==2.31.0",
+		"python -Impip install requests==2.31.0",
+	}
+
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+			if err != nil {
+				t.Fatalf("Evaluate(%q) returned error: %v", cmd, err)
+			}
+			if result.Decision != direct.Decision {
+				t.Fatalf("Decision = %s, want %s: %s", result.Decision, direct.Decision, result.Reason)
+			}
+			if result.RewrittenCommand != "" {
+				t.Fatalf("expected no rewrite for exact wrapper command, got %q", result.RewrittenCommand)
+			}
+			if len(result.Packages) != 1 {
+				t.Fatalf("expected one evaluated package for %q, got %#v", cmd, result.Packages)
+			}
+			got := result.Packages[0]
+			want := direct.Packages[0]
+			if got.Ecosystem != want.Ecosystem || got.Name != want.Name || got.Requested != want.Requested || got.SelectedVersion != want.SelectedVersion {
+				t.Fatalf("package evaluation = %#v, want ecosystem=%q name=%q requested=%q selected=%q", got, want.Ecosystem, want.Name, want.Requested, want.SelectedVersion)
+			}
+		})
+	}
+}
+
+func TestEvaluate_NonPipPythonModulePassthrough(t *testing.T) {
+	cfg := config.DefaultConfig()
+	prov := &recordingProvider{available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	tests := []string{
+		"python -m http.server",
+		"python -I -m http.server",
+		"python3 -s -m compileall .",
+		"python -BIm http.server 8000",
+	}
+
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != api.Allow {
+				t.Fatalf("Decision = %s, want Allow: %s", result.Decision, result.Reason)
+			}
+			if result.Reason != "not a guarded install command" {
+				t.Fatalf("Reason = %q, want passthrough reason", result.Reason)
+			}
+			if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+				t.Fatalf("non-pip python module should not call provider, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+			}
+		})
 	}
 }
 

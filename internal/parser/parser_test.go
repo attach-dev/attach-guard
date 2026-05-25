@@ -805,6 +805,15 @@ func TestParse_CommandPrefixes(t *testing.T) {
 		{"uv pip install python flag", "uv pip install -p 3.13 requests", "requests"},
 		{"uv pip install python assignment flag", "uv pip install --python 3.13 requests", "requests"},
 		{"sudo uv pip install", "sudo uv pip install requests", "requests"},
+		{"python module pip install", "python -m pip install requests", "requests"},
+		{"python3 module pip install", "python3 -m pip install requests", "requests"},
+		{"python3.11 module pip install", "python3.11 -m pip install requests", "requests"},
+		{"python isolated module pip install", "python -I -m pip install requests", "requests"},
+		{"python3 no user site module pip install", "python3 -s -m pip install requests", "requests"},
+		{"python value flags module pip install", "python -X dev -W ignore -m pip install requests", "requests"},
+		{"python long value flag module pip install", "python --check-hash-based-pycs default -m pip install requests", "requests"},
+		{"python combined flags module pip install", "python -BIm pip install requests", "requests"},
+		{"python attached module pip install", "python -Impip install requests", "requests"},
 	}
 
 	for _, tt := range tests {
@@ -838,6 +847,13 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		"uv sync",
 		"uv --project /tmp add requests",
 		"uv --directory=/tmp sync",
+		"python -m http.server",
+		"python3 -m compileall .",
+		"python3.11 -m venv .venv",
+		"python -I -m http.server",
+		"python3 -s -m compileall .",
+		"python -BIm http.server 8000",
+		"python -c 'import pip' -m pip install requests",
 	}
 	for _, cmd := range nonInstalls {
 		if result := Parse(cmd); result != nil {
@@ -864,6 +880,8 @@ func TestLooksLikeInstall(t *testing.T) {
 		"strace uv -p 3.13 pip install requests",
 		"strace uv --project /tmp pip install requests",
 		"strace uv --directory=/tmp pip install requests",
+		"strace python -I -m pip install requests",
+		"strace python -BIm pip install requests",
 	}
 	for _, cmd := range suspicious {
 		if !LooksLikeInstall(cmd) {
@@ -887,6 +905,8 @@ func TestLooksLikeInstall(t *testing.T) {
 		"printf npm install axios",
 		"grep npm install package.json",
 		"python -c 'npm install'",
+		"python -I -m http.server",
+		"python3 -s -m compileall .",
 		"node -e 'npm install'",
 		"bash -c 'echo hello' npm install axios",
 		"sh -c 'ls' npm install lodash",
@@ -932,6 +952,12 @@ func TestIsInstallCommand(t *testing.T) {
 		"cargo install ripgrep",
 		"uv pip install requests",
 		"uv --project /tmp pip install requests",
+		"python -m pip install requests",
+		"python3 -m pip install requests",
+		"python3.11 -m pip install requests",
+		"python -I -m pip install requests",
+		"python3 -s -m pip install requests",
+		"python -X dev -W ignore -m pip install requests",
 		"cargo install ripgrep --version 14.0.0",
 	}
 	for _, cmd := range installCmds {
@@ -953,6 +979,8 @@ func TestIsInstallCommand(t *testing.T) {
 		"cargo build",
 		"uv add requests",
 		"uv sync",
+		"python -m http.server",
+		"python -I -m http.server",
 	}
 	for _, cmd := range nonInstallCmds {
 		if IsInstallCommand(cmd) {
@@ -1015,6 +1043,13 @@ func TestParse_MultiEcosystemCommands(t *testing.T) {
 		{"uv pip install project flag", "uv --project /tmp pip install requests", "pip", 1, "requests", "", false, false, false},
 		{"uv pip install directory assignment", "uv --directory=/tmp pip install requests", "pip", 1, "requests", "", false, false, false},
 		{"sudo uv pip install", "sudo uv pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"python module pip install basic", "python -m pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"python3 module pip install pinned", "python3 -m pip install requests==2.31.0", "pip", 1, "requests", "2.31.0", true, false, false},
+		{"python3.11 module pip install pinned", "python3.11 -m pip install requests==2.31.0", "pip", 1, "requests", "2.31.0", true, false, false},
+		{"python isolated module pip install", "python -I -m pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"python3 no user site module pip install", "python3 -s -m pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"python value flags module pip install", "python -X dev -W ignore -m pip install requests", "pip", 1, "requests", "", false, false, false},
+		{"python combined flags module pip install", "python -BIm pip install requests", "pip", 1, "requests", "", false, false, false},
 	}
 
 	for _, tt := range tests {
