@@ -102,6 +102,14 @@ func (e *Evaluator) Evaluate(ctx context.Context, rawCommand string, mode api.Mo
 		}, nil
 	}
 
+	if shouldDeferUVManualReview(enabledCmds) {
+		return &api.EvaluationResult{
+			Decision:        api.Ask,
+			Reason:          "uv command may modify project dependencies or wrap a package-manager install; manual review required",
+			OriginalCommand: rawCommand,
+		}, nil
+	}
+
 	provAvailable := e.prov.IsAvailable(ctx)
 	canRewriteShape := len(cmds) == 1 && len(enabledCmds) == 1 && rewriteEligible(rawCommand, enabledCmds[0])
 
@@ -335,6 +343,15 @@ func shouldDeferOpenScoreYarn(rawCommand string, cmds []*api.ParsedCommand) bool
 		}
 	}
 	return !seenYarn && parser.LooksLikeYarnInstall(rawCommand)
+}
+
+func shouldDeferUVManualReview(cmds []*api.ParsedCommand) bool {
+	for _, cmd := range cmds {
+		if cmd.PackageManager == "uv" && cmd.HasNonLocalUnparsedArgs {
+			return true
+		}
+	}
+	return false
 }
 
 func disabledPackageManagersReason(disabledPMs []string) string {

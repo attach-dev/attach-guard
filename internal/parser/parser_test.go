@@ -662,22 +662,27 @@ func TestParseAll_SuppressedWrapperSubstitutionDoesNotHideCleanSegment(t *testin
 	tests := []struct {
 		name    string
 		command string
+		wantLen int
 	}{
-		{"command introspection", "command -v $(npm install evil-pkg) && npm install safe-pkg"},
-		{"uv non-pip", "uv add $(npm install evil-pkg) && npm install safe-pkg"},
+		{"command introspection", "command -v $(npm install evil-pkg) && npm install safe-pkg", 2},
+		{"uv manual review", "uv add $(npm install evil-pkg) && npm install safe-pkg", 3},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results := ParseAll(tt.command)
-			if len(results) != 2 {
-				t.Fatalf("ParseAll returned %d commands, want hidden substitution plus outer install: %#v", len(results), results)
+			if len(results) != tt.wantLen {
+				t.Fatalf("ParseAll returned %d commands, want %d commands: %#v", len(results), tt.wantLen, results)
 			}
 			if results[0].PackageManager != "npm" || len(results[0].Packages) != 1 || results[0].Packages[0].Name != "evil-pkg" {
 				t.Fatalf("first parsed command = %#v, want hidden npm install evil-pkg", results[0])
 			}
-			if results[1].PackageManager != "npm" || len(results[1].Packages) != 1 || results[1].Packages[0].Name != "safe-pkg" {
-				t.Fatalf("second parsed command = %#v, want outer npm install safe-pkg", results[1])
+			outerIdx := len(results) - 1
+			if tt.wantLen == 3 && (results[1].PackageManager != "uv" || !results[1].HasNonLocalUnparsedArgs) {
+				t.Fatalf("second parsed command = %#v, want uv manual-review command", results[1])
+			}
+			if results[outerIdx].PackageManager != "npm" || len(results[outerIdx].Packages) != 1 || results[outerIdx].Packages[0].Name != "safe-pkg" {
+				t.Fatalf("outer parsed command = %#v, want outer npm install safe-pkg", results[outerIdx])
 			}
 		})
 	}
@@ -843,10 +848,6 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		`echo "npm install axios"`,
 		"bash -c 'echo hello'",
 		"bash -c 'echo hello' npm install axios",
-		"uv add requests",
-		"uv sync",
-		"uv --project /tmp add requests",
-		"uv --directory=/tmp sync",
 		"python -m http.server",
 		"python3 -m compileall .",
 		"python3.11 -m venv .venv",
@@ -859,6 +860,37 @@ func TestParse_CommandPrefixes_NonInstall(t *testing.T) {
 		if result := Parse(cmd); result != nil {
 			t.Errorf("Parse(%q) should return nil", cmd)
 		}
+	}
+}
+
+func TestParse_UVManualReviewCommands(t *testing.T) {
+	tests := []struct {
+		command string
+		action  string
+	}{
+		{"uv add requests", "add"},
+		{"uv sync", "sync"},
+		{"uv --project /tmp add requests", "add"},
+		{"uv --directory=/tmp sync", "sync"},
+		{"uv run pip install requests", "run"},
+		{"uv run python -m pip install requests", "run"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			result := Parse(tt.command)
+			if result == nil {
+				t.Fatalf("Parse(%q) returned nil, want uv manual-review command", tt.command)
+			}
+			if result.PackageManager != "uv" || result.Action != tt.action {
+				t.Fatalf("parsed command = %#v, want uv action %q", result, tt.action)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("expected no parsed packages for uv manual-review command, got %#v", result.Packages)
+			}
+			if !result.HasUnparsedArgs || !result.HasNonLocalUnparsedArgs {
+				t.Fatalf("expected uv manual-review command to be marked unparsed/non-local, got %#v", result)
+			}
+		})
 	}
 }
 
@@ -959,6 +991,8 @@ func TestIsInstallCommand(t *testing.T) {
 		"python3 -s -m pip install requests",
 		"python -X dev -W ignore -m pip install requests",
 		"cargo install ripgrep --version 14.0.0",
+		"uv add requests",
+		"uv sync",
 	}
 	for _, cmd := range installCmds {
 		if !IsInstallCommand(cmd) {
@@ -977,8 +1011,8 @@ func TestIsInstallCommand(t *testing.T) {
 		"pip --version",
 		"go build ./...",
 		"cargo build",
-		"uv add requests",
-		"uv sync",
+		"uv --version",
+		"uv run python -m pytest",
 		"python -m http.server",
 		"python -I -m http.server",
 	}

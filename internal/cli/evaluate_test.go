@@ -547,6 +547,109 @@ func TestEvaluate_SuspiciousUnparsedInstall(t *testing.T) {
 	}
 }
 
+func TestEvaluate_UVProjectCommandsAskWithoutProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	prov := &recordingProvider{available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	tests := []string{
+		"uv add requests",
+		"uv --project ./app add requests",
+		"uv --directory ./app sync",
+		"uv sync --all-extras",
+		"uv run pip install requests",
+		"uv run python -m pip install requests",
+		"uv run npm install left-pad",
+		"uv run --active npm install left-pad",
+	}
+
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != api.Ask {
+				t.Fatalf("Decision = %s, want Ask: %s", result.Decision, result.Reason)
+			}
+			if !strings.Contains(result.Reason, "uv command") {
+				t.Fatalf("expected uv manual-review reason, got %q", result.Reason)
+			}
+			if len(result.Packages) != 0 {
+				t.Fatalf("expected no provider-backed package evaluations, got %#v", result.Packages)
+			}
+			if result.RewrittenCommand != "" {
+				t.Fatalf("expected no rewrite, got %q", result.RewrittenCommand)
+			}
+		})
+	}
+
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("uv manual-review commands should not request provider, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+	}
+}
+
+func TestEvaluate_UVPipInstallStillEvaluates(t *testing.T) {
+	cfg := config.DefaultConfig()
+	prov := &recordingProvider{available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	tests := []string{
+		"uv pip install requests==1.0.0",
+		"uv --project ./app pip install requests==1.0.0",
+	}
+
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != api.Allow {
+				t.Fatalf("Decision = %s, want Allow: %s", result.Decision, result.Reason)
+			}
+			if len(result.Packages) != 1 {
+				t.Fatalf("expected one package evaluation, got %#v", result.Packages)
+			}
+			if result.Packages[0].Name != "requests" {
+				t.Fatalf("package name = %q, want requests", result.Packages[0].Name)
+			}
+		})
+	}
+
+	if prov.availableCalls == 0 || prov.scoreCalls == 0 {
+		t.Fatalf("uv pip install should request provider, got available=%d score=%d", prov.availableCalls, prov.scoreCalls)
+	}
+}
+
+func TestEvaluate_BenignUVCommandsPassThroughWithoutProvider(t *testing.T) {
+	cfg := config.DefaultConfig()
+	prov := &recordingProvider{available: true}
+	eval := NewEvaluator(cfg, prov)
+
+	tests := []string{
+		"uv --version",
+		"uv run python -m pytest",
+		"uv run -- python -m pytest",
+	}
+
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			result, err := eval.Evaluate(context.Background(), cmd, api.ModeShell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Decision != api.Allow {
+				t.Fatalf("Decision = %s, want Allow: %s", result.Decision, result.Reason)
+			}
+		})
+	}
+
+	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
+		t.Fatalf("benign uv commands should not request provider, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+	}
+}
+
 func TestEvaluate_NonNPMCommand(t *testing.T) {
 	cfg := config.DefaultConfig()
 	mock := provider.NewMockProvider()
