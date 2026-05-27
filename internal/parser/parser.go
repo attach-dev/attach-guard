@@ -118,6 +118,11 @@ func parseUnwrappedTokensAll(tokens []string, rawCommand string, inherited sourc
 		results = append(results, cmd)
 		return results
 	}
+	if cmd := parseUVManualReview(tokens, rawCommand); cmd != nil {
+		applyShellTokenInfo(cmd, prepared)
+		results = append(results, cmd)
+		return results
+	}
 	if cmd := pip.Parse(tokens, rawCommand); cmd != nil {
 		applySourceOverrideContext(cmd, inherited)
 		applyShellTokenInfo(cmd, prepared)
@@ -957,8 +962,9 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 			return result
 		}
 
-		// uv — only transparent when followed by "pip" (uv pip install ...).
-		// Other uv subcommands (uv add, uv sync) are not guarded.
+		// uv — transparent only when followed by "pip" (uv pip install ...).
+		// Other uv subcommands are left intact so dependency-affecting project
+		// commands can defer to manual review instead of being silently allowed.
 		if base == "uv" {
 			if rest, ok := unwrapUVPipTokens(result.tokens); ok {
 				// Strip "uv", leaving ["pip", "install", ...] for the pip parser.
@@ -966,10 +972,6 @@ func unwrapPrefixes(tokens []string) unwrapResult {
 				result.tokens = rest
 				continue
 			}
-			// Not "uv pip ..." — not guarded, stop unwrapping, but preserve
-			// active command substitutions in ignored uv argv for fail-closed checks.
-			result.discarded = append(result.discarded, result.tokens...)
-			result.tokens = nil
 			return result
 		}
 
@@ -1029,6 +1031,108 @@ func (r *unwrapResult) discardLeading(n int) {
 	}
 	r.discarded = append(r.discarded, r.tokens[:n]...)
 	r.tokens = r.tokens[n:]
+}
+
+func parseUVManualReview(tokens []string, rawCommand string) *api.ParsedCommand {
+	if len(tokens) < 2 || filepath.Base(tokens[0]) != "uv" {
+		return nil
+	}
+
+	actionIdx := uvSubcommandIndex(tokens)
+	if actionIdx == -1 {
+		return nil
+	}
+
+	action := tokens[actionIdx]
+	switch action {
+	case "add", "sync":
+		return uvManualReviewCommand(tokens, rawCommand, actionIdx, action)
+	case "run":
+		if uvRunLooksLikePackageManagerInstall(tokens[actionIdx+1:]) {
+			return uvManualReviewCommand(tokens, rawCommand, actionIdx, action)
+		}
+	}
+	return nil
+}
+
+func uvSubcommandIndex(tokens []string) int {
+	for i := 1; i < len(tokens); i++ {
+		tok := tokens[i]
+		if tok == "--" {
+			if i+1 < len(tokens) {
+				return i + 1
+			}
+			return -1
+		}
+		if !strings.HasPrefix(tok, "-") {
+			return i
+		}
+
+		flagName := tok
+		if name, _, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+			flagName = name
+		}
+		if uvFlagTakesValue(flagName) && flagName == tok && i+1 < len(tokens) {
+			i++
+			continue
+		}
+	}
+	return -1
+}
+
+func uvManualReviewCommand(tokens []string, rawCommand string, actionIdx int, action string) *api.ParsedCommand {
+	return &api.ParsedCommand{
+		PackageManager:          "uv",
+		Action:                  action,
+		PreActionFlags:          append([]string(nil), tokens[1:actionIdx]...),
+		HasUnparsedArgs:         true,
+		HasNonLocalUnparsedArgs: true,
+		IsInstall:               true,
+		RawCommand:              rawCommand,
+	}
+}
+
+func uvRunLooksLikePackageManagerInstall(tokens []string) bool {
+	actionIdx := uvRunCommandIndex(tokens)
+	if actionIdx == -1 {
+		return false
+	}
+	return looksLikeInstallTokensWithPMs(tokens[actionIdx:], 0, pmBinaries) ||
+		looksLikeInstallTokensWithPMs(tokens[actionIdx:], 0, yarnPMBinaries)
+}
+
+func uvRunCommandIndex(tokens []string) int {
+	for i := 0; i < len(tokens); i++ {
+		tok := tokens[i]
+		if tok == "--" {
+			if i+1 < len(tokens) {
+				return i + 1
+			}
+			return -1
+		}
+		if !strings.HasPrefix(tok, "-") {
+			return i
+		}
+		name := tok
+		if parsedName, _, ok := parseutil.SplitLongFlagAssignment(tok); ok {
+			name = parsedName
+		}
+		if uvRunFlagTakesValue(name) && name == tok && i+1 < len(tokens) {
+			i++
+		}
+	}
+	return -1
+}
+
+func uvRunFlagTakesValue(flag string) bool {
+	switch flag {
+	case "--with", "--with-editable", "--with-requirements", "--python",
+		"-p", "--project", "--directory", "--config-file", "--cache-dir",
+		"--env-file":
+		return true
+	default:
+		return false
+	}
 }
 
 // isEnvVarAssignment returns true if tok looks like KEY=value where KEY is a
