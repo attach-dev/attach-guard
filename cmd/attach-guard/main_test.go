@@ -13,11 +13,30 @@ import (
 )
 
 func TestCmdRunDryRunClaudePrintsExpectedWrappedArgv(t *testing.T) {
-	assertDryRunPrintsWrappedArgv(t, "claude", "claude\n")
+	var stdout, stderr bytes.Buffer
+
+	code := cmdRun([]string{"--dry-run", "claude"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.HasPrefix(got, "claude --settings ") {
+		t.Fatalf("expected Claude settings injection, got %q", got)
+	}
+	if !strings.Contains(got, "--permission-mode default") {
+		t.Fatalf("expected default permission mode, got %q", got)
+	}
+	if !strings.Contains(got, "disableBypassPermissionsMode") {
+		t.Fatalf("expected bypass mode disable setting, got %q", got)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
 }
 
 func TestCmdRunDryRunCodexPrintsExpectedWrappedArgv(t *testing.T) {
-	assertDryRunPrintsWrappedArgv(t, "codex", "codex\n")
+	assertDryRunPrintsWrappedArgv(t, "codex", "codex --sandbox workspace-write --ask-for-approval on-request -c sandbox_workspace_write.network_access=false\n")
 }
 
 func TestCmdRunDryRunQuotesWrappedArgv(t *testing.T) {
@@ -28,8 +47,9 @@ func TestCmdRunDryRunQuotesWrappedArgv(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "claude --model 'sonnet 4' 'can'\\''t'\n"; got != want {
-		t.Fatalf("expected stdout %q, got %q", want, got)
+	got := stdout.String()
+	if !strings.Contains(got, "--model 'sonnet 4' 'can'\\''t'") {
+		t.Fatalf("expected quoted user args, got %q", got)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("expected no stderr, got %q", stderr.String())
@@ -53,8 +73,8 @@ func TestCmdRunDryRunDoesNotExecuteAgent(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
 	}
-	if got, want := stdout.String(), "claude\n"; got != want {
-		t.Fatalf("expected stdout %q, got %q", want, got)
+	if got := stdout.String(); !strings.HasPrefix(got, "claude --settings ") {
+		t.Fatalf("expected hardened Claude command, got %q", got)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("expected no stderr, got %q", stderr.String())
@@ -80,6 +100,79 @@ func TestCmdRunDryRunUnsupportedAgent(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), runUsage) {
 		t.Fatalf("expected usage, got %q", stderr.String())
+	}
+}
+
+func TestCmdRunDryRunRejectsUnsafeClaudePermissionModes(t *testing.T) {
+	tests := [][]string{
+		{"--dry-run", "claude", "--permission-mode", "bypassPermissions"},
+		{"--dry-run", "claude", "--permission-mode=acceptEdits"},
+		{"--dry-run", "claude", "--dangerously-skip-permissions"},
+		{"--dry-run", "claude", "--settings", `{"permissions":{"allow":["Bash"]}}`},
+	}
+
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			code := cmdRun(args, strings.NewReader(""), &stdout, &stderr)
+
+			if code != 1 {
+				t.Fatalf("expected exit code 1, got %d", code)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("expected no stdout, got %q", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "Claude Code") {
+				t.Fatalf("expected Claude hardening error, got %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestCmdRunDryRunRejectsUnsafeCodexSandboxModes(t *testing.T) {
+	tests := [][]string{
+		{"--dry-run", "codex", "--sandbox", "danger-full-access"},
+		{"--dry-run", "codex", "--sandbox=danger-full-access"},
+		{"--dry-run", "codex", "--dangerously-bypass-approvals-and-sandbox"},
+		{"--dry-run", "codex", "--yolo"},
+		{"--dry-run", "codex", "-c", "sandbox_mode = \"danger-full-access\""},
+		{"--dry-run", "codex", "-c", "default_permissions=\":danger-full-access\""},
+		{"--dry-run", "codex", "-c", "sandbox_workspace_write.network_access=true"},
+	}
+
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+
+			code := cmdRun(args, strings.NewReader(""), &stdout, &stderr)
+
+			if code != 1 {
+				t.Fatalf("expected exit code 1, got %d", code)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("expected no stdout, got %q", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "Codex") {
+				t.Fatalf("expected Codex hardening error, got %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestCmdRunDryRunPreservesStricterRuntimeSandboxArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := cmdRun([]string{"--dry-run", "codex", "--sandbox", "read-only", "--ask-for-approval", "untrusted"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); got != "codex -c sandbox_workspace_write.network_access=false --sandbox read-only --ask-for-approval untrusted\n" {
+		t.Fatalf("unexpected stdout %q", got)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
 	}
 }
 
@@ -155,7 +248,7 @@ func TestCmdRunExecutesAgentWithPlatformEnvironment(t *testing.T) {
 	if code != 7 {
 		t.Fatalf("expected child exit code 7, got %d; stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); !strings.Contains(got, "runtime=claude_code key_present=yes args=--model sonnet") {
+	if got := stdout.String(); !strings.Contains(got, "runtime=claude_code key_present=yes") || !strings.Contains(got, "--model sonnet") {
 		t.Fatalf("unexpected stdout %q", got)
 	}
 	if strings.Contains(stderr.String(), "arun_usr_secret") {

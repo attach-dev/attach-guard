@@ -247,7 +247,7 @@ attach-guard evaluate <command>    Evaluate a package manager command against po
 attach-guard hook [run|claude|codex]
                                    Read runtime hook JSON from stdin and respond
 attach-guard run [--dry-run] <claude|codex> [args...]
-                                   Run an agent after Attach Platform setup preflight
+                                   Run an agent after Attach Platform setup preflight and runtime hardening
 attach-guard config init           Write default config to ~/.attach-guard/config.yaml
 attach-guard version               Print version
 attach-guard help                  Show help
@@ -289,6 +289,13 @@ attach-guard run --dry-run codex --sandbox read-only "Review this diff"
 attach-guard run claude
 attach-guard run codex
 ```
+
+`attach-guard run` applies runtime-native hardening before exec:
+
+- Codex runs with `--sandbox workspace-write`, `--ask-for-approval on-request`, and command network access disabled unless the user supplies an explicit supported setting.
+- Codex `danger-full-access`, `--yolo`, and explicit command network enablement are rejected.
+- Claude Code runs with session settings that select default permission mode, disable bypass permissions mode, and deny common direct web/secrets access rules.
+- Claude Code `bypassPermissions`, `acceptEdits`, `auto`, `dontAsk`, `--dangerously-skip-permissions`, and user-supplied `--settings` are rejected by the wrapper. Claude Code does not expose a Codex-style OS sandbox flag, so this is permission hardening, not a platform sandbox claim.
 
 ## Configuration
 

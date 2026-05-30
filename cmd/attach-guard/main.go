@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -78,7 +79,7 @@ Commands:
   evaluate <command>   Evaluate a package manager command against policy
   hook [run|claude|codex]
                        Read runtime hook JSON from stdin and respond
-  run [--dry-run] <claude|codex> [args...] Run an agent with Attach Platform setup preflight
+  run [--dry-run] <claude|codex> [args...] Run an agent with Attach Platform setup preflight and runtime hardening
   config init          Write default config to ~/.attach-guard/config.yaml
   version              Print version
   help                 Show this help`)
@@ -108,9 +109,9 @@ func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	agent := positional[0]
-	wrappedCommand, ok := wrappedAgentCommand(agent, positional[1:])
-	if !ok {
-		fmt.Fprintf(stderr, "unsupported agent: %s\n", agent)
+	wrappedCommand, err := wrappedAgentCommand(agent, positional[1:])
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		fmt.Fprintln(stderr, runUsage)
 		return 1
 	}
@@ -197,6 +198,15 @@ func guardedAgentEnv(base []string, setup *platform.Config, agent string) []stri
 	})
 }
 
+type claudeRunSettings struct {
+	Permissions map[string][]string `json:"permissions"`
+	DefaultMode string              `json:"defaultMode"`
+
+	// This key is accepted in any Claude Code settings scope and prevents the
+	// bypass permissions mode from being activated for this session.
+	DisableBypassPermissionsMode string `json:"disableBypassPermissionsMode"`
+}
+
 func withEnv(base []string, overrides map[string]string) []string {
 	out := make([]string, 0, len(base)+len(overrides))
 	seen := make(map[string]bool, len(overrides))
@@ -219,16 +229,182 @@ func withEnv(base []string, overrides map[string]string) []string {
 	return out
 }
 
-func wrappedAgentCommand(agent string, args []string) ([]string, bool) {
+func wrappedAgentCommand(agent string, args []string) ([]string, error) {
 	switch agent {
-	case "claude", "codex":
-		argv := make([]string, 1, 1+len(args))
+	case "claude":
+		hardenedArgs, err := hardenedClaudeArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		argv := make([]string, 1, 1+len(hardenedArgs))
 		argv[0] = agent
-		argv = append(argv, args...)
-		return argv, true
+		argv = append(argv, hardenedArgs...)
+		return argv, nil
+	case "codex":
+		hardenedArgs, err := hardenedCodexArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		argv := make([]string, 1, 1+len(hardenedArgs))
+		argv[0] = agent
+		argv = append(argv, hardenedArgs...)
+		return argv, nil
 	default:
-		return nil, false
+		return nil, fmt.Errorf("unsupported agent: %s", agent)
 	}
+}
+
+func hardenedClaudeArgs(args []string) ([]string, error) {
+	if err := validateClaudeRunArgs(args); err != nil {
+		return nil, err
+	}
+
+	settings := claudeRunSettings{
+		Permissions: map[string][]string{
+			"deny": {
+				"WebFetch",
+				"WebSearch",
+				"Read(./.env)",
+				"Read(./.env.*)",
+				"Read(./secrets/**)",
+				"Bash(curl *)",
+				"Bash(wget *)",
+			},
+		},
+		DefaultMode:                  "default",
+		DisableBypassPermissionsMode: "disable",
+	}
+	settingsJSON, err := json.Marshal(settings)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Claude run settings: %w", err)
+	}
+
+	out := []string{"--settings", string(settingsJSON)}
+	if !hasFlagWithValue(args, "--permission-mode") {
+		out = append(out, "--permission-mode", "default")
+	}
+	return append(out, args...), nil
+}
+
+func validateClaudeRunArgs(args []string) error {
+	if hasBoolFlag(args, "--dangerously-skip-permissions") {
+		return fmt.Errorf("Claude Code bypass permissions mode is not allowed under attach-guard run")
+	}
+	if hasFlagWithValue(args, "--settings") {
+		return fmt.Errorf("Claude Code --settings is managed by attach-guard run so the hardened session policy cannot be overridden")
+	}
+	if mode, ok := flagValue(args, "--permission-mode"); ok {
+		switch mode {
+		case "default", "plan":
+			return nil
+		default:
+			return fmt.Errorf("Claude Code permission mode %q is not allowed under attach-guard run; use default or plan", mode)
+		}
+	}
+	return nil
+}
+
+func hardenedCodexArgs(args []string) ([]string, error) {
+	if err := validateCodexRunArgs(args); err != nil {
+		return nil, err
+	}
+
+	out := make([]string, 0, len(args)+6)
+	if !hasFlagWithValue(args, "--sandbox") && !hasCodexConfigKey(args, "sandbox_mode") && !hasCodexConfigKey(args, "default_permissions") {
+		out = append(out, "--sandbox", "workspace-write")
+	}
+	if !hasFlagWithValue(args, "--ask-for-approval") && !hasFlagWithValue(args, "-a") && !hasCodexConfigKey(args, "approval_policy") {
+		out = append(out, "--ask-for-approval", "on-request")
+	}
+	if !hasCodexConfigKey(args, "sandbox_workspace_write.network_access") {
+		out = append(out, "-c", "sandbox_workspace_write.network_access=false")
+	}
+	return append(out, args...), nil
+}
+
+func validateCodexRunArgs(args []string) error {
+	if hasBoolFlag(args, "--dangerously-bypass-approvals-and-sandbox") || hasBoolFlag(args, "--yolo") {
+		return fmt.Errorf("Codex danger-full-access mode is not allowed under attach-guard run")
+	}
+	if sandbox, ok := flagValue(args, "--sandbox"); ok && sandbox == "danger-full-access" {
+		return fmt.Errorf("Codex sandbox %q is not allowed under attach-guard run", sandbox)
+	}
+	for _, value := range codexConfigValues(args) {
+		normalized := normalizeConfigAssignment(value)
+		switch {
+		case normalized == "sandbox_mode=danger-full-access":
+			return fmt.Errorf("Codex sandbox_mode danger-full-access is not allowed under attach-guard run")
+		case normalized == "default_permissions=:danger-full-access":
+			return fmt.Errorf("Codex default_permissions :danger-full-access is not allowed under attach-guard run")
+		case normalized == "sandbox_workspace_write.network_access=true":
+			return fmt.Errorf("Codex command network access is disabled under attach-guard run")
+		}
+	}
+	return nil
+}
+
+func hasBoolFlag(args []string, name string) bool {
+	prefix := name + "="
+	for _, arg := range args {
+		if arg == name || strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasFlagWithValue(args []string, name string) bool {
+	_, ok := flagValue(args, name)
+	return ok
+}
+
+func flagValue(args []string, name string) (string, bool) {
+	prefix := name + "="
+	for i, arg := range args {
+		if strings.HasPrefix(arg, prefix) {
+			return strings.TrimPrefix(arg, prefix), true
+		}
+		if arg == name && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+func hasCodexConfigKey(args []string, key string) bool {
+	prefix := key + "="
+	for _, value := range codexConfigValues(args) {
+		if strings.HasPrefix(normalizeConfigAssignment(value), prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexConfigValues(args []string) []string {
+	var values []string
+	for i, arg := range args {
+		switch {
+		case arg == "-c" || arg == "--config":
+			if i+1 < len(args) {
+				values = append(values, args[i+1])
+			}
+		case strings.HasPrefix(arg, "-c="):
+			values = append(values, strings.TrimPrefix(arg, "-c="))
+		case strings.HasPrefix(arg, "--config="):
+			values = append(values, strings.TrimPrefix(arg, "--config="))
+		}
+	}
+	return values
+}
+
+func normalizeConfigAssignment(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, " ", "")
+	value = strings.ReplaceAll(value, "\t", "")
+	value = strings.ReplaceAll(value, `"`, "")
+	value = strings.ReplaceAll(value, `'`, "")
+	return value
 }
 
 func shellQuoteLine(argv []string) string {
