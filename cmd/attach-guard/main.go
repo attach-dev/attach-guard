@@ -199,12 +199,25 @@ func guardedAgentEnv(base []string, setup *platform.Config, agent string) []stri
 }
 
 type claudeRunSettings struct {
-	Permissions map[string][]string `json:"permissions"`
-	DefaultMode string              `json:"defaultMode"`
+	Permissions     claudePermissionSettings `json:"permissions"`
+	DisableAutoMode string                   `json:"disableAutoMode"`
+	Sandbox         claudeSandboxSettings    `json:"sandbox"`
+}
 
-	// This key is accepted in any Claude Code settings scope and prevents the
-	// bypass permissions mode from being activated for this session.
+type claudePermissionSettings struct {
+	Deny        []string `json:"deny"`
+	DefaultMode string   `json:"defaultMode"`
+
+	// This key prevents the bypass permissions mode from being activated for
+	// this session.
 	DisableBypassPermissionsMode string `json:"disableBypassPermissionsMode"`
+}
+
+type claudeSandboxSettings struct {
+	Enabled                  bool `json:"enabled"`
+	FailIfUnavailable        bool `json:"failIfUnavailable"`
+	AutoAllowBashIfSandboxed bool `json:"autoAllowBashIfSandboxed"`
+	AllowUnsandboxedCommands bool `json:"allowUnsandboxedCommands"`
 }
 
 func withEnv(base []string, overrides map[string]string) []string {
@@ -260,8 +273,8 @@ func hardenedClaudeArgs(args []string) ([]string, error) {
 	}
 
 	settings := claudeRunSettings{
-		Permissions: map[string][]string{
-			"deny": {
+		Permissions: claudePermissionSettings{
+			Deny: []string{
 				"WebFetch",
 				"WebSearch",
 				"Read(./.env)",
@@ -270,9 +283,16 @@ func hardenedClaudeArgs(args []string) ([]string, error) {
 				"Bash(curl *)",
 				"Bash(wget *)",
 			},
+			DefaultMode:                  "default",
+			DisableBypassPermissionsMode: "disable",
 		},
-		DefaultMode:                  "default",
-		DisableBypassPermissionsMode: "disable",
+		DisableAutoMode: "disable",
+		Sandbox: claudeSandboxSettings{
+			Enabled:                  true,
+			FailIfUnavailable:        true,
+			AutoAllowBashIfSandboxed: false,
+			AllowUnsandboxedCommands: false,
+		},
 	}
 	settingsJSON, err := json.Marshal(settings)
 	if err != nil {

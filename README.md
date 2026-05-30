@@ -294,8 +294,8 @@ attach-guard run codex
 
 - Codex runs with `--sandbox workspace-write`, `--ask-for-approval on-request`, and command network access disabled unless the user supplies an explicit supported setting.
 - Codex `danger-full-access`, `--yolo`, and explicit command network enablement are rejected.
-- Claude Code runs with session settings that select default permission mode, disable bypass permissions mode, and deny common direct web/secrets access rules.
-- Claude Code `bypassPermissions`, `acceptEdits`, `auto`, `dontAsk`, `--dangerously-skip-permissions`, and user-supplied `--settings` are rejected by the wrapper. Claude Code does not expose a Codex-style OS sandbox flag, so this is permission hardening, not a platform sandbox claim.
+- Claude Code runs with session settings that enable the native Bash sandbox, fail closed if that sandbox is unavailable, select default permission mode, disable bypass/auto permission modes, and deny common direct web/secrets access rules.
+- Claude Code `bypassPermissions`, `acceptEdits`, `auto`, `dontAsk`, `--dangerously-skip-permissions`, and user-supplied `--settings` are rejected by the wrapper. This uses Claude Code's native sandbox/settings surface; it is still not an Attach Platform or Gateway sandbox claim.
 
 ## Configuration
 
