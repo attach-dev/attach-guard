@@ -9,6 +9,8 @@
 - [x] Minimum package age enforcement
 - [x] Version selection and command rewrite
 - [x] Claude Code PreToolUse hook
+- [x] Codex PreToolUse hook adapter with safe ask-to-deny mapping
+- [x] Platform-gated `attach-guard run claude|codex`
 - [x] JSONL audit logging
 - [x] Config loading with env var overrides
 - [x] CLI: evaluate, hook, config init, version

@@ -179,7 +179,7 @@ attach-guard config init
 # Default config written to ~/.attach-guard/config.yaml
 ```
 
-This creates `~/.attach-guard/config.yaml` with compatibility defaults. Review [Configuration](#configuration) before relying on provider behavior; hosted/default Attach scoring is planned, not shipped in this package.
+This creates `~/.attach-guard/config.yaml` with compatibility defaults. Review [Configuration](#configuration) before relying on provider behavior; no hosted/default Attach scoring endpoint is shipped in this package.
 
 #### Step 4: Add the Claude Code hook
 
@@ -227,23 +227,27 @@ Claude: I'll install axios.
 
 ## How It Works
 
-When Claude Code calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `python -I -m pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
+When Claude Code or Codex calls the Bash tool with a package install command (e.g., `npm install axios`, `pip install requests`, `python -I -m pip install requests`, `go get golang.org/x/net`, `cargo add serde`):
 
-1. Claude Code fires the PreToolUse hook before execution
+1. The runtime fires the PreToolUse hook before execution
 2. The hook pipes the tool input JSON to `attach-guard hook` via stdin
 3. attach-guard parses the command, evaluates packages against policy
 4. Returns a `hookSpecificOutput` JSON response:
    - `permissionDecision: "allow"` — install proceeds
    - `permissionDecision: "ask"` — Claude shows the reason and asks the user
-   - `permissionDecision: "deny"` — install is blocked, reason shown to Claude
+   - `permissionDecision: "deny"` — install is blocked, reason shown to the runtime
 5. On internal errors, exits with code 2 (blocking) to fail closed
+
+Codex PreToolUse does not support `permissionDecision: "ask"` today. In the Codex adapter, Attach Guard maps manual-review `ask` decisions to `deny` so the package install does not proceed silently.
 
 ## CLI Commands
 
 ```
 attach-guard evaluate <command>    Evaluate a package manager command against policy
-attach-guard hook [run]            Read Claude Code hook JSON from stdin and respond
-attach-guard run --dry-run <claude|codex> [args...] Preview a claude/codex command without executing it
+attach-guard hook [run|claude|codex]
+                                   Read runtime hook JSON from stdin and respond
+attach-guard run [--dry-run] <claude|codex> [args...]
+                                   Run an agent after Attach Platform setup preflight
 attach-guard config init           Write default config to ~/.attach-guard/config.yaml
 attach-guard version               Print version
 attach-guard help                  Show help
@@ -272,18 +276,25 @@ attach-guard evaluate cargo add serde@=1.0.200
 # Use as a Claude Code hook (reads JSON from stdin)
 attach-guard hook
 
-# Preview supported agent commands without starting the agent
+# Use as a Codex hook (reads JSON from stdin)
+attach-guard hook codex
+
+# Preview supported agent commands without starting the agent or checking setup
 attach-guard run --dry-run claude
 attach-guard run --dry-run codex
 attach-guard run --dry-run claude --model sonnet
 attach-guard run --dry-run codex --sandbox read-only "Review this diff"
+
+# Run supported agents after `attach setup` has created ~/.attach/config.json
+attach-guard run claude
+attach-guard run codex
 ```
 
 ## Configuration
 
 Default config location: `~/.attach-guard/config.yaml`
 
-`attach-guard config init` currently writes a compatibility config for the local BYO-token provider path. That compatibility default is not hosted/default Attach scoring; use it only with an explicit local provider token. Attach Open Score is the first-party scoring direction, but hosted/default Attach scoring is planned and not shipped in this package.
+`attach-guard config init` currently writes a compatibility config for the local BYO-token provider path. That compatibility default is not hosted/default Attach scoring; use it only with an explicit local provider token. Attach Open Score is the first-party scoring direction, but no hosted/default Attach scoring endpoint is shipped in this package.
 
 ```yaml
 provider:
@@ -365,6 +376,7 @@ When you run an unpinned supported command such as `npm install axios`, `pip ins
 - If the latest passes policy, the command runs as-is
 - If the latest fails but an older version passes, direct package-manager command shapes get a rewrite suggestion using ecosystem-native syntax
 - In Claude Code mode, direct rewrites return `ask` with the rewritten command via `updatedInput`
+- In Codex mode, manual-review `ask` decisions are mapped to `deny` because Codex PreToolUse does not support `ask` today
 - Wrapped pip commands are evaluated, but wrapper-preserving rewrites are not emitted yet; commands such as `python -m pip install requests` or `uv pip install requests` ask for manual review when a rewrite would be required
 - If no version passes, denies
 
@@ -416,7 +428,7 @@ Provider calls can fail when a local BYO-token account is unavailable, rate-limi
 - Direct `pip` / `pip3`, `python -m pip` / `python3 -m pip` wrappers with safe interpreter flags before `-m`, `uv pip`, `go get` / `go install`, and `cargo add` / `cargo install` are supported
 - Rewrites are emitted only for direct package-manager command shapes; wrapped pip commands are evaluated but ask for manual review when a safe-version rewrite is needed
 - `uv add` / `uv sync`, pip extras/range/constraint-aware handling, Cargo requirement syntax, and non-semver Go queries are intentionally deferred to manual review rather than being auto-evaluated
-- Hosted/default Attach scoring is planned; today, Attach Open Score-compatible verdicts require explicit `open-score` endpoint configuration
+- Default hosted scoring is not baked into this package; today, Attach Open Score-compatible verdicts require explicit `open-score` endpoint configuration or platform-issued credentials from `attach setup`
 - Local BYO-token providers can be affected by upstream availability, rate limits, or quota during evaluation and version rewrite
 - No transitive dependency analysis
 - No lockfile graph support
