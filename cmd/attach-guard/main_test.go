@@ -30,6 +30,12 @@ func TestCmdRunDryRunClaudePrintsExpectedWrappedArgv(t *testing.T) {
 	if !strings.Contains(got, "disableBypassPermissionsMode") {
 		t.Fatalf("expected bypass mode disable setting, got %q", got)
 	}
+	if !strings.Contains(got, `"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":false,"allowUnsandboxedCommands":false}`) {
+		t.Fatalf("expected Claude sandbox settings, got %q", got)
+	}
+	if !strings.Contains(got, `"disableAutoMode":"disable"`) {
+		t.Fatalf("expected auto mode disable setting, got %q", got)
+	}
 	if stderr.String() != "" {
 		t.Fatalf("expected no stderr, got %q", stderr.String())
 	}
