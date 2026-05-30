@@ -26,6 +26,15 @@ All subprocess execution uses `exec.Command` with explicit argv slices. No comma
 
 Shell shims use the `ATTACH_GUARD_ACTIVE` environment variable to prevent infinite recursion. When set, shims bypass attach-guard and exec the real binary directly.
 
+## Runtime Hardening
+
+`attach-guard run` tightens supported runtime controls before exec while preserving `--dry-run` as a non-executing preview:
+
+- Codex receives native sandbox flags by default: workspace-write, on-request approvals, and disabled command network access.
+- Codex runs that request `danger-full-access`, `--yolo`, or explicit command network access are rejected.
+- Claude Code receives session settings for default permission mode, disabled bypass permissions mode, and deny rules for direct web tools, common secret files, and direct `curl`/`wget` shell access.
+- Claude Code permission modes that bypass or auto-accept tool use are rejected. Claude Code does not expose a Codex-style OS sandbox flag, so the shipped control is permission hardening rather than OS sandboxing.
+
 ## Config Security
 
 - Project-local config merges with but does not silently replace global config
