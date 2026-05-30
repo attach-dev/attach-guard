@@ -110,6 +110,7 @@ type Mode string
 
 const (
 	ModeClaude Mode = "claude"
+	ModeCodex  Mode = "codex"
 	ModeShell  Mode = "shell"
 	ModeCI     Mode = "ci"
 )

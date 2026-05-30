@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"strings"
 
 	"github.com/attach-dev/attach-guard/internal/cli"
 	"github.com/attach-dev/attach-guard/internal/config"
 	"github.com/attach-dev/attach-guard/internal/envdetect"
 	"github.com/attach-dev/attach-guard/internal/hook/claude"
+	"github.com/attach-dev/attach-guard/internal/hook/codex"
+	"github.com/attach-dev/attach-guard/internal/platform"
 	"github.com/attach-dev/attach-guard/internal/provider"
 	openscoreprov "github.com/attach-dev/attach-guard/internal/provider/openscore"
 	socketprov "github.com/attach-dev/attach-guard/internal/provider/socket"
@@ -39,17 +43,21 @@ func main() {
 		cmdEvaluate()
 	case "hook":
 		// "hook" with no subcommand reads hook JSON from stdin
-		// "hook run" also reads from stdin (alias)
+		// "hook run" also reads from stdin (Claude compatibility alias)
 		if len(os.Args) >= 3 && os.Args[2] == "run" {
 			cmdHook()
+		} else if len(os.Args) >= 3 && os.Args[2] == "claude" {
+			cmdHook()
+		} else if len(os.Args) >= 3 && os.Args[2] == "codex" {
+			cmdCodexHook()
 		} else if len(os.Args) == 2 {
 			cmdHook()
 		} else {
-			fmt.Fprintf(os.Stderr, "unknown hook subcommand: %s\nusage: attach-guard hook [run]\n", os.Args[2])
+			fmt.Fprintf(os.Stderr, "unknown hook subcommand: %s\nusage: attach-guard hook [run|claude|codex]\n", os.Args[2])
 			os.Exit(exitCodeHookBlock)
 		}
 	case "run":
-		os.Exit(cmdRun(os.Args[2:], os.Stdout, os.Stderr))
+		os.Exit(cmdRun(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	case "config":
 		cmdConfig()
 	case "version":
@@ -68,17 +76,20 @@ func printUsage() {
 
 Commands:
   evaluate <command>   Evaluate a package manager command against policy
-  hook [run]           Read Claude Code hook JSON from stdin and respond
-  run --dry-run <claude|codex> [args...] Preview an agent command without executing it
+  hook [run|claude|codex]
+                       Read runtime hook JSON from stdin and respond
+  run [--dry-run] <claude|codex> [args...] Run an agent with Attach Platform setup preflight
   config init          Write default config to ~/.attach-guard/config.yaml
   version              Print version
   help                 Show this help`)
 }
 
-const runUsage = "usage: attach-guard run --dry-run <claude|codex> [args...]"
+const runUsage = "usage: attach-guard run [--dry-run] <claude|codex> [args...]"
+
+var runPreflightAttachSetup = preflightAttachSetup
 
 // cmdRun handles agent-wrapper commands.
-func cmdRun(args []string, stdout, stderr io.Writer) int {
+func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("attach-guard run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {
@@ -96,11 +107,6 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if !*dryRun {
-		fmt.Fprintln(stderr, runUsage)
-		return 1
-	}
-
 	agent := positional[0]
 	wrappedCommand, ok := wrappedAgentCommand(agent, positional[1:])
 	if !ok {
@@ -109,8 +115,108 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	fmt.Fprintln(stdout, shellQuoteLine(wrappedCommand))
-	return 0
+	if *dryRun {
+		fmt.Fprintln(stdout, shellQuoteLine(wrappedCommand))
+		return 0
+	}
+
+	setup, err := runPreflightAttachSetup()
+	if err != nil {
+		fmt.Fprintf(stderr, "Attach Platform setup required: %v\n", err)
+		fmt.Fprintln(stderr, "Run `attach setup` before `attach-guard run`, then retry.")
+		return 1
+	}
+
+	return executeAgent(wrappedCommand, guardedAgentEnv(os.Environ(), setup, agent), stdin, stdout, stderr)
+}
+
+func preflightAttachSetup() (*platform.Config, error) {
+	path := platform.DefaultConfigPath()
+	setup, err := platform.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.Verify(context.Background(), nil, setup); err != nil {
+		return nil, err
+	}
+	return setup, nil
+}
+
+func executeAgent(argv []string, env []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = env
+	cmd.Stdin = stdin
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(stderr, "failed to start %s: %v\n", argv[0], err)
+		return 1
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	defer signal.Stop(signals)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-signals:
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(sig)
+			}
+		case <-done:
+		}
+	}()
+
+	err := cmd.Wait()
+	close(done)
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	fmt.Fprintf(stderr, "failed to run %s: %v\n", argv[0], err)
+	return 1
+}
+
+func guardedAgentEnv(base []string, setup *platform.Config, agent string) []string {
+	runtimeKind := agent
+	if agent == "claude" {
+		runtimeKind = "claude_code"
+	}
+	return withEnv(base, map[string]string{
+		"ATTACH_API_URL":              setup.APIURL,
+		"ATTACH_API_KEY":              setup.APIKey,
+		"ATTACH_SCORE_API_URL":        setup.APIURL,
+		"ATTACH_SCORE_API_KEY":        setup.APIKey,
+		"ATTACH_RUNTIME_KIND":         runtimeKind,
+		"ATTACH_GUARD_ACTIVE":         "1",
+		"ATTACH_GUARD_AGENT_COMMAND":  agent,
+		"ATTACH_GUARD_PLATFORM_SETUP": "1",
+	})
+}
+
+func withEnv(base []string, overrides map[string]string) []string {
+	out := make([]string, 0, len(base)+len(overrides))
+	seen := make(map[string]bool, len(overrides))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if value, exists := overrides[key]; exists {
+				out = append(out, key+"="+value)
+				seen[key] = true
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	for key, value := range overrides {
+		if !seen[key] {
+			out = append(out, key+"="+value)
+		}
+	}
+	return out
 }
 
 func wrappedAgentCommand(agent string, args []string) ([]string, bool) {
@@ -238,6 +344,58 @@ func cmdHook() {
 	}
 
 	out, err := claude.FormatHookOutput(result)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
+		os.Exit(exitCodeHookBlock)
+	}
+
+	fmt.Println(string(out))
+}
+
+// cmdCodexHook reads Codex hook JSON from stdin and writes Codex PreToolUse output.
+func cmdCodexHook() {
+	input, err := codex.ReadHookInput(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error reading hook input: %v\n", err)
+		os.Exit(exitCodeHookBlock)
+	}
+
+	if !codex.IsGuardedTool(input.ToolName) {
+		out, err := codex.FormatHookOutput(&api.EvaluationResult{
+			Decision: api.Allow,
+			Reason:   "not a guarded tool",
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
+			os.Exit(exitCodeHookBlock)
+		}
+		fmt.Println(string(out))
+		return
+	}
+
+	if isSelfInvocation(input.ToolInput.Command) {
+		out, err := codex.FormatHookOutput(&api.EvaluationResult{
+			Decision: api.Allow,
+			Reason:   "attach-guard self-invocation",
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
+			os.Exit(exitCodeHookBlock)
+		}
+		fmt.Println(string(out))
+		return
+	}
+
+	cfg, prov := loadConfigAndProvider(exitCodeHookBlock)
+	eval := cli.NewEvaluator(cfg, prov)
+
+	result, err := eval.Evaluate(context.Background(), input.ToolInput.Command, api.ModeCodex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error evaluating: %v\n", err)
+		os.Exit(exitCodeHookBlock)
+	}
+
+	out, err := codex.FormatHookOutput(result)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error formatting output: %v\n", err)
 		os.Exit(exitCodeHookBlock)
