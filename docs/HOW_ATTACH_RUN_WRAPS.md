@@ -8,7 +8,8 @@ The product value is in what happens **before exec**:
 
 1. Verify the user is signed up at Attach Platform.
 2. Inject hardened CLI flags so the agent's own sandbox + permission policy are turned on and cannot be bypassed for the session.
-3. Inject environment variables so MCP servers and hooks running inside the agent know about the platform identity.
+3. Load Attach Guard hooks for the session so package installs are evaluated by policy.
+4. Inject environment variables so MCP servers and hooks running inside the agent know about the platform identity.
 
 That's it. The "wrap" is not exotic — what's load-bearing is the platform identity binding and the hardened defaults.
 
@@ -49,6 +50,8 @@ The wrapper injects `--settings <json>` containing:
 
 It also adds `--permission-mode default` if the user did not supply one.
 
+If no `--plugin-dir` was supplied, the wrapper looks for a local/source Attach Guard Claude plugin and injects `--plugin-dir <path>` when `plugin/.claude-plugin/plugin.json` is present. This makes local wrapped runs use the current plugin manifest and hook command instead of whatever version happens to be cached from the Claude Code marketplace. Set `ATTACH_GUARD_CLAUDE_PLUGIN_DIR=/path/to/plugin` to choose a plugin explicitly, or `ATTACH_GUARD_CLAUDE_PLUGIN_DIR=off` to skip plugin-dir injection.
+
 The wrapper **refuses to start** if the user passes:
 
 - `--dangerously-skip-permissions`
@@ -62,6 +65,8 @@ The wrapper injects (only if the user hasn't already set them):
 - `--sandbox workspace-write`
 - `--ask-for-approval on-request`
 - `-c sandbox_workspace_write.network_access=false`
+- `-c features.hooks=true`
+- `-c 'hooks.PreToolUse=[...]'` pointing at the current `attach-guard hook codex` binary
 
 The wrapper **refuses to start** if the user passes:
 
@@ -70,9 +75,20 @@ The wrapper **refuses to start** if the user passes:
 - `--sandbox danger-full-access`
 - a `-c` override that re-enables network access in the workspace-write sandbox
 
+If the user already supplied Codex hook configuration through `-c hooks.*` or `-c features.hooks=...`, the wrapper preserves it and does not inject its own PreToolUse config. That keeps explicit user configuration predictable while making the default `attach-guard run codex` path actually load the Guard hook.
+
 Code: `wrappedAgentCommand`, `hardenedClaudeArgs`, `hardenedCodexArgs`, `validateClaudeRunArgs`, `validateCodexRunArgs` in `cmd/attach-guard/main.go`.
 
-### 3. Platform env vars injected
+### 3. Hooks loaded for the session
+
+Hook loading is also part of argv construction:
+
+- Claude Code gets `--plugin-dir <path>` when the local/source plugin manifest is present and the user did not supply a plugin dir.
+- Codex gets inline `features.hooks=true` and `hooks.PreToolUse=[...]` config when the user did not supply hook config.
+
+These are session-scoped. The wrapper does not install, update, or mutate global plugin/cache state.
+
+### 4. Platform env vars injected
 
 Both wrapped sessions get these in their environment:
 
@@ -91,7 +107,7 @@ MCP servers running inside the agent (Attach Files, Attach Score, future modules
 
 Code: `guardedAgentEnv` in `cmd/attach-guard/main.go`.
 
-### 4. Exec, with stdio + signal passthrough
+### 5. Exec, with stdio + signal passthrough
 
 ```go
 cmd := exec.Command(argv[0], argv[1:]...)
