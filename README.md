@@ -294,7 +294,7 @@ attach-guard run codex
 
 - Codex runs with `--sandbox workspace-write`, `--ask-for-approval on-request`, and command network access disabled unless the user supplies an explicit supported setting.
 - Codex `danger-full-access`, `--yolo`, and explicit command network enablement are rejected.
-- Codex receives an inline PreToolUse hook configuration that calls the current `attach-guard hook codex` binary unless the user already supplied hook config.
+- Codex receives an inline PreToolUse hook configuration that calls the current `attach-guard hook codex` binary unless the user already supplied hook config. The hook command path is resolved when the wrapped session starts; rebuilding or moving the binary affects new sessions, not already-running sessions.
 - Claude Code runs with session settings that enable the native Bash sandbox, fail closed if that sandbox is unavailable, select default permission mode, disable bypass/auto permission modes, and deny common direct web/secrets access rules.
 - Claude Code `bypassPermissions`, `acceptEdits`, `auto`, `dontAsk`, `--dangerously-skip-permissions`, and user-supplied `--settings` are rejected by the wrapper. This uses Claude Code's native sandbox/settings surface; it is still not an Attach Platform or Gateway sandbox claim.
 - Claude Code receives `--plugin-dir` for the local/source Attach Guard plugin when the wrapper can find `plugin/.claude-plugin/plugin.json`, so a wrapped local run uses the fresh plugin instead of a stale marketplace cache. Set `ATTACH_GUARD_CLAUDE_PLUGIN_DIR=/path/to/plugin` to choose a plugin explicitly, or `ATTACH_GUARD_CLAUDE_PLUGIN_DIR=off` to skip this injection.

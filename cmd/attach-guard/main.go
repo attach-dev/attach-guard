@@ -471,10 +471,7 @@ func pluginDirCandidates() []string {
 	}
 	if exe, err := runExecutablePath(); err == nil {
 		exeDir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(exeDir, "plugin"),
-			filepath.Clean(filepath.Join(exeDir, "..", "..")),
-		)
+		candidates = append(candidates, filepath.Join(exeDir, "plugin"))
 	}
 	return candidates
 }
