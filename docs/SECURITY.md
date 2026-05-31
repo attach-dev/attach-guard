@@ -32,8 +32,10 @@ Shell shims use the `ATTACH_GUARD_ACTIVE` environment variable to prevent infini
 
 - Codex receives native sandbox flags by default: workspace-write, on-request approvals, and disabled command network access.
 - Codex runs that request `danger-full-access`, `--yolo`, or explicit command network access are rejected.
+- Codex receives an inline PreToolUse hook configuration that runs the current `attach-guard hook codex` binary unless hook config is already supplied.
 - Claude Code receives session settings that enable the native Bash sandbox, fail closed if the sandbox is unavailable, select default permission mode, disable bypass and auto permission modes, and deny direct web tools, common secret files, and direct `curl`/`wget` shell access.
 - Claude Code permission modes that bypass or auto-accept tool use are rejected. This is runtime-native hardening and still does not claim an Attach Platform or Gateway sandbox.
+- Claude Code receives `--plugin-dir` for the local/source Attach Guard plugin when available, so wrapped local runs use the current plugin manifest/hooks rather than a stale global plugin cache. The wrapper does not mutate Claude Code's installed marketplace plugin cache.
 
 ## Config Security
 

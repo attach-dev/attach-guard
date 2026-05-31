@@ -13,6 +13,8 @@ import (
 )
 
 func TestCmdRunDryRunClaudePrintsExpectedWrappedArgv(t *testing.T) {
+	pluginDir := writeClaudePluginManifest(t)
+	t.Setenv("ATTACH_GUARD_CLAUDE_PLUGIN_DIR", pluginDir)
 	var stdout, stderr bytes.Buffer
 
 	code := cmdRun([]string{"--dry-run", "claude"}, strings.NewReader(""), &stdout, &stderr)
@@ -36,13 +38,40 @@ func TestCmdRunDryRunClaudePrintsExpectedWrappedArgv(t *testing.T) {
 	if !strings.Contains(got, `"disableAutoMode":"disable"`) {
 		t.Fatalf("expected auto mode disable setting, got %q", got)
 	}
+	if !strings.Contains(got, "--plugin-dir ") {
+		t.Fatalf("expected local Claude plugin dir injection, got %q", got)
+	}
+	if !strings.Contains(got, shellQuoteArg(pluginDir)) {
+		t.Fatalf("expected plugin dir %q, got %q", pluginDir, got)
+	}
 	if stderr.String() != "" {
 		t.Fatalf("expected no stderr, got %q", stderr.String())
 	}
 }
 
 func TestCmdRunDryRunCodexPrintsExpectedWrappedArgv(t *testing.T) {
-	assertDryRunPrintsWrappedArgv(t, "codex", "codex --sandbox workspace-write --ask-for-approval on-request -c sandbox_workspace_write.network_access=false\n")
+	restore := stubRunExecutablePath(t, "/opt/attach/bin/attach-guard")
+	defer restore()
+
+	var stdout, stderr bytes.Buffer
+	code := cmdRun([]string{"--dry-run", "codex"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "codex --sandbox workspace-write --ask-for-approval on-request -c sandbox_workspace_write.network_access=false") {
+		t.Fatalf("expected Codex sandbox defaults, got %q", got)
+	}
+	if !strings.Contains(got, "-c features.hooks=true") {
+		t.Fatalf("expected Codex hooks feature config, got %q", got)
+	}
+	if !strings.Contains(got, "hooks.PreToolUse=") || !strings.Contains(got, "/opt/attach/bin/attach-guard hook codex") {
+		t.Fatalf("expected Codex attach-guard hook config, got %q", got)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
 }
 
 func TestCmdRunDryRunQuotesWrappedArgv(t *testing.T) {
@@ -167,6 +196,9 @@ func TestCmdRunDryRunRejectsUnsafeCodexSandboxModes(t *testing.T) {
 }
 
 func TestCmdRunDryRunPreservesStricterRuntimeSandboxArgs(t *testing.T) {
+	restore := stubRunExecutablePath(t, "/opt/attach/bin/attach-guard")
+	defer restore()
+
 	var stdout, stderr bytes.Buffer
 
 	code := cmdRun([]string{"--dry-run", "codex", "--sandbox", "read-only", "--ask-for-approval", "untrusted"}, strings.NewReader(""), &stdout, &stderr)
@@ -174,8 +206,54 @@ func TestCmdRunDryRunPreservesStricterRuntimeSandboxArgs(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
 	}
-	if got := stdout.String(); got != "codex -c sandbox_workspace_write.network_access=false --sandbox read-only --ask-for-approval untrusted\n" {
+	got := stdout.String()
+	if !strings.Contains(got, "codex -c sandbox_workspace_write.network_access=false -c features.hooks=true") {
+		t.Fatalf("expected default network and hook config, got %q", got)
+	}
+	if !strings.Contains(got, "--sandbox read-only --ask-for-approval untrusted") {
 		t.Fatalf("unexpected stdout %q", got)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+}
+
+func TestCmdRunDryRunPreservesExplicitClaudePluginDir(t *testing.T) {
+	pluginDir := writeClaudePluginManifest(t)
+	t.Setenv("ATTACH_GUARD_CLAUDE_PLUGIN_DIR", pluginDir)
+	var stdout, stderr bytes.Buffer
+
+	code := cmdRun([]string{"--dry-run", "claude", "--plugin-dir", "/tmp/custom-plugin"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "--plugin-dir /tmp/custom-plugin") {
+		t.Fatalf("expected explicit plugin dir to be preserved, got %q", got)
+	}
+	if strings.Count(got, "--plugin-dir") != 1 {
+		t.Fatalf("expected one plugin dir flag, got %q", got)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected no stderr, got %q", stderr.String())
+	}
+}
+
+func TestCmdRunDryRunPreservesExplicitCodexHookConfig(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+
+	code := cmdRun([]string{"--dry-run", "codex", "-c", "features.hooks=false"}, strings.NewReader(""), &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", code, stderr.String())
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "-c features.hooks=false") {
+		t.Fatalf("expected explicit hook config, got %q", got)
+	}
+	if strings.Contains(got, "hooks.PreToolUse") {
+		t.Fatalf("expected wrapper not to inject hook config over explicit hook config, got %q", got)
 	}
 	if stderr.String() != "" {
 		t.Fatalf("expected no stderr, got %q", stderr.String())
@@ -347,6 +425,19 @@ func quoteJSON(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
 }
 
+func writeClaudePluginManifest(t *testing.T) string {
+	t.Helper()
+	pluginDir := filepath.Join(t.TempDir(), "plugin")
+	manifestDir := filepath.Join(pluginDir, ".claude-plugin")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatalf("create plugin manifest dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "plugin.json"), []byte(`{"name":"attach-guard","version":"test"}`), 0644); err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+	return pluginDir
+}
+
 func stubRunPreflight(t *testing.T, cfg *platform.Config) func() {
 	t.Helper()
 	original := runPreflightAttachSetup
@@ -363,4 +454,13 @@ func stubRunPreflightError(t *testing.T, err error) func() {
 		return nil, err
 	}
 	return func() { runPreflightAttachSetup = original }
+}
+
+func stubRunExecutablePath(t *testing.T, path string) func() {
+	t.Helper()
+	original := runExecutablePath
+	runExecutablePath = func() (string, error) {
+		return path, nil
+	}
+	return func() { runExecutablePath = original }
 }

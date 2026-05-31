@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/attach-dev/attach-guard/internal/cli"
@@ -88,6 +89,8 @@ Commands:
 const runUsage = "usage: attach-guard run [--dry-run] <claude|codex> [args...]"
 
 var runPreflightAttachSetup = preflightAttachSetup
+var runExecutablePath = os.Executable
+var runWorkingDir = os.Getwd
 
 // cmdRun handles agent-wrapper commands.
 func cmdRun(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -300,6 +303,11 @@ func hardenedClaudeArgs(args []string) ([]string, error) {
 	}
 
 	out := []string{"--settings", string(settingsJSON)}
+	if !hasFlagWithValue(args, "--plugin-dir") {
+		if pluginDir, ok := localClaudePluginDir(); ok {
+			out = append(out, "--plugin-dir", pluginDir)
+		}
+	}
 	if !hasFlagWithValue(args, "--permission-mode") {
 		out = append(out, "--permission-mode", "default")
 	}
@@ -338,6 +346,15 @@ func hardenedCodexArgs(args []string) ([]string, error) {
 	}
 	if !hasCodexConfigKey(args, "sandbox_workspace_write.network_access") {
 		out = append(out, "-c", "sandbox_workspace_write.network_access=false")
+	}
+	if !hasCodexHookConfig(args) {
+		hookConfigs, err := codexHookConfigs()
+		if err != nil {
+			return nil, err
+		}
+		for _, hookConfig := range hookConfigs {
+			out = append(out, "-c", hookConfig)
+		}
 	}
 	return append(out, args...), nil
 }
@@ -425,6 +442,77 @@ func normalizeConfigAssignment(value string) string {
 	value = strings.ReplaceAll(value, `"`, "")
 	value = strings.ReplaceAll(value, `'`, "")
 	return value
+}
+
+func localClaudePluginDir() (string, bool) {
+	if value := strings.TrimSpace(os.Getenv("ATTACH_GUARD_CLAUDE_PLUGIN_DIR")); value != "" {
+		if value == "off" || value == "disabled" {
+			return "", false
+		}
+		abs, err := filepath.Abs(value)
+		if err == nil && isClaudePluginDir(abs) {
+			return abs, true
+		}
+		return "", false
+	}
+
+	for _, candidate := range pluginDirCandidates() {
+		if isClaudePluginDir(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func pluginDirCandidates() []string {
+	var candidates []string
+	if cwd, err := runWorkingDir(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, "plugin"))
+	}
+	if exe, err := runExecutablePath(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "plugin"),
+			filepath.Clean(filepath.Join(exeDir, "..", "..")),
+		)
+	}
+	return candidates
+}
+
+func isClaudePluginDir(path string) bool {
+	info, err := os.Stat(filepath.Join(path, ".claude-plugin", "plugin.json"))
+	return err == nil && !info.IsDir()
+}
+
+func hasCodexHookConfig(args []string) bool {
+	for _, value := range codexConfigValues(args) {
+		normalized := normalizeConfigAssignment(value)
+		if strings.HasPrefix(normalized, "hooks.") || strings.HasPrefix(normalized, "features.hooks=") {
+			return true
+		}
+	}
+	return false
+}
+
+func codexHookConfigs() ([]string, error) {
+	exe, err := runExecutablePath()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve attach-guard executable for Codex hook config: %w", err)
+	}
+	abs, err := filepath.Abs(exe)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve attach-guard executable for Codex hook config: %w", err)
+	}
+	command := shellQuoteLine([]string{abs, "hook", "codex"})
+	return []string{
+		"features.hooks=true",
+		`hooks.PreToolUse=[{matcher="Bash",hooks=[{type="command",command=` + tomlQuote(command) + `}]}]`,
+	}, nil
+}
+
+func tomlQuote(value string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`, "\t", `\t`).Replace(value)
+	return `"` + escaped + `"`
 }
 
 func shellQuoteLine(argv []string) string {
