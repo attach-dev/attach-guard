@@ -68,6 +68,8 @@ The wrapper injects (only if the user hasn't already set them):
 - `-c features.hooks=true`
 - `-c 'hooks.PreToolUse=[...]'` pointing at the current `attach-guard hook codex` binary
 
+The Codex hook command uses the absolute path of the `attach-guard` binary that started the wrapped session. If that binary is rebuilt or moved while Codex is still running, the active session keeps using the original path; new wrapped sessions resolve the path again.
+
 The wrapper **refuses to start** if the user passes:
 
 - `--dangerously-bypass-approvals-and-sandbox`
