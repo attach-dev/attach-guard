@@ -8,7 +8,6 @@
   "repository": "https://github.com/attach-dev/attach-guard",
   "license": "MIT",
   "keywords": ["security", "supply-chain", "npm", "pnpm", "hooks"],
-  "hooks": "./hooks/hooks.json",
   "skills": "./skills/",
   "userConfig": {
     "socket_api_token": {
