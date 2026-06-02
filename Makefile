@@ -1,7 +1,9 @@
 BINARY_NAME := attach-guard
-VERSION := 0.2.0
+VERSION := 0.5.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
 PLATFORMS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
+RELEASE_DIR := dist/release
+PLUGIN_ARCHIVE := attach-guard-plugin-v$(VERSION).tar.gz
 
 .PHONY: build test vet plugin-build plugin-clean plugin-stamp-version release
 
@@ -33,4 +35,11 @@ plugin-clean:
 SHA256 := $(shell command -v sha256sum 2>/dev/null || echo "shasum -a 256")
 
 release: test vet plugin-build
-	cd plugin/hooks/bin && $(SHA256) attach-guard-* > checksums.txt
+	rm -rf $(RELEASE_DIR)
+	mkdir -p $(RELEASE_DIR)
+	cp plugin/hooks/bin/$(BINARY_NAME)-* $(RELEASE_DIR)/
+	cd $(RELEASE_DIR) && $(SHA256) $(BINARY_NAME)-* > checksums.txt
+	cp $(RELEASE_DIR)/checksums.txt plugin/hooks/bin/checksums.txt
+	tar -czf $(RELEASE_DIR)/$(PLUGIN_ARCHIVE) --exclude='plugin/plugin_test.go' -C . plugin
+	cd $(RELEASE_DIR) && $(SHA256) $(PLUGIN_ARCHIVE) >> checksums.txt
+	@echo "Release assets written to $(RELEASE_DIR)"
