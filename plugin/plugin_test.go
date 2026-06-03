@@ -255,12 +255,113 @@ func TestBootstrapWithoutOpenScoreTokenStaysLocal(t *testing.T) {
 	}
 }
 
+func TestBootstrapAcceptsUppercaseOpenScorePluginOption(t *testing.T) {
+	root, bootstrapPath := newBootstrapHarness(t, "#!/usr/bin/env bash\nprintf '%s\\n' \"${ATTACH_OPEN_SCORE_API_TOKEN:-}\" \"${ATTACH_OPEN_SCORE_ENDPOINT:-}\" \"$1\"\n")
+
+	cmd := exec.Command(bootstrapPath, "version")
+	env := testEnvWithoutOpenScore()
+	env = append(env,
+		"HOME="+root,
+		"CLAUDE_PLUGIN_OPTION_ATTACH_OPEN_SCORE_API_TOKEN=tok-uppercase",
+	)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v\n%s", err, out)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("unexpected bootstrap output: %q", out)
+	}
+	if lines[0] != "tok-uppercase" {
+		t.Fatalf("expected uppercase token, got %q", lines[0])
+	}
+	if lines[1] != "https://score.attach.dev/v0/verdict" {
+		t.Fatalf("expected hosted endpoint, got %q", lines[1])
+	}
+	if lines[2] != "version" {
+		t.Fatalf("expected forwarded arg version, got %q", lines[2])
+	}
+}
+
+func TestBootstrapReadsScoreEnvAsData(t *testing.T) {
+	root, bootstrapPath := newBootstrapHarness(t, "#!/usr/bin/env bash\nprintf '%s\\n' \"${ATTACH_OPEN_SCORE_API_TOKEN:-}\" \"${ATTACH_OPEN_SCORE_ENDPOINT:-}\" \"$1\"\n")
+	guardDir := filepath.Join(root, ".attach-guard")
+	if err := os.MkdirAll(guardDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pwnedPath := filepath.Join(root, "score-env-executed")
+	scoreEnv := "export ATTACH_OPEN_SCORE_API_TOKEN='tok-file'\n" +
+		"touch " + pwnedPath + "\n"
+	if err := os.WriteFile(filepath.Join(guardDir, "score.env"), []byte(scoreEnv), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(bootstrapPath, "version")
+	env := testEnvWithoutOpenScore()
+	env = append(env, "HOME="+root)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(pwnedPath); !os.IsNotExist(err) {
+		t.Fatalf("score.env was executed; stat err=%v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("unexpected bootstrap output: %q", out)
+	}
+	if lines[0] != "tok-file" {
+		t.Fatalf("expected token from score.env, got %q", lines[0])
+	}
+	if lines[1] != "https://score.attach.dev/v0/verdict" {
+		t.Fatalf("expected hosted endpoint, got %q", lines[1])
+	}
+	if lines[2] != "version" {
+		t.Fatalf("expected forwarded arg version, got %q", lines[2])
+	}
+}
+
+func newBootstrapHarness(t *testing.T, stub string) (string, string) {
+	t.Helper()
+	bootstrap, err := os.ReadFile(filepath.Join("hooks", "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	hooksDir := filepath.Join(root, "hooks")
+	binDir := filepath.Join(hooksDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapPath := filepath.Join(hooksDir, "bootstrap.sh")
+	if err := os.WriteFile(bootstrapPath, bootstrap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, binaryName := range []string{
+		"attach-guard-darwin-amd64",
+		"attach-guard-darwin-arm64",
+		"attach-guard-linux-amd64",
+		"attach-guard-linux-arm64",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, binaryName), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root, bootstrapPath
+}
+
 func testEnvWithoutOpenScore() []string {
 	env := []string{}
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "ATTACH_OPEN_SCORE_API_TOKEN=") &&
 			!strings.HasPrefix(entry, "ATTACH_OPEN_SCORE_ENDPOINT=") &&
 			!strings.HasPrefix(entry, "CLAUDE_PLUGIN_OPTION_attach_open_score_api_token=") &&
+			!strings.HasPrefix(entry, "CLAUDE_PLUGIN_OPTION_ATTACH_OPEN_SCORE_API_TOKEN=") &&
 			!strings.HasPrefix(entry, "HOME=") {
 			env = append(env, entry)
 		}

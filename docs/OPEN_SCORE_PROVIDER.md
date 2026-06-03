@@ -162,13 +162,9 @@ provider:
 
 The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. The local command provider consumes the same verdict shape from `attach-open-score package`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 provider path.
 
-Socket provider docs must keep this in advanced/local BYO-token context and show explicit configuration:
-
-```yaml
-provider:
-  kind: socket
-  api_token_env: SOCKET_API_TOKEN
-```
+Do not add proprietary-provider config examples to setup docs. Open Score
+examples should use the local `attach-open-score` command or an
+Attach Open Score-compatible endpoint with `ATTACH_OPEN_SCORE_API_TOKEN`.
 
 ## Implementation checklist
 

@@ -225,6 +225,7 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("ATTACH_OPEN_SCORE_ENDPOINT"); v != "" {
 		cfg.Provider.Kind = "open-score"
 		cfg.Provider.Endpoint = v
+		cfg.Provider.APITokenEnv = "ATTACH_OPEN_SCORE_API_TOKEN"
 	}
 	if v := os.Getenv("ATTACH_OPEN_SCORE_BIN"); v != "" {
 		cfg.Provider.Kind = "open-score"

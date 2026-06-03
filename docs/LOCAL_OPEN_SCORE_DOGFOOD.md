@@ -21,7 +21,7 @@ What does **not** exist yet:
 - No public hosted Attach Open Score behavior is documented or promised here.
 - No hosted/default `open-score` endpoint is baked into attach-guard; local scoring uses the configured command, and HTTP endpoints must be explicitly configured.
 - The CLI `mock` provider is an empty local provider unless test code seeds fixtures; it is useful for tests, not for ad-hoc scoring demos.
-- Socket.dev remains an explicit bring-your-own-token local provider only. Do not present Socket data, Socket scores, or Socket quota behavior as Attach Open Score.
+- Do not present proprietary provider data, scores, or quota behavior as Attach Open Score.
 
 For the provider contract, see [Attach Open Score provider semantics](OPEN_SCORE_PROVIDER.md).
 
@@ -31,7 +31,6 @@ For the provider contract, see [Attach Open Score provider semantics](OPEN_SCORE
 - A clean checkout of this repository.
 - A local `attach-open-score` binary on `PATH`, or `ATTACH_OPEN_SCORE_BIN=/path/to/attach-open-score`, when exercising the local command provider.
 - No Attach-hosted credentials are required.
-- A Socket API token is optional and only needed if you also want to exercise the current Socket BYO-token provider path.
 
 ## 1. Run the verdict-semantics dogfood tests
 
@@ -43,9 +42,9 @@ go test ./internal/policy ./internal/versionselect ./internal/cli ./e2e -run 'Op
 
 Or run the checked smoke helper, which uses only synthetic local tests, redirects
 `HOME` and focused-smoke audit output under a temporary directory, preserves the
-current Go module/build caches to avoid unnecessary downloads, unsets local
-provider overrides, and unsets `SOCKET_API_TOKEN` so it cannot accidentally
-exercise the BYO Socket provider path:
+current Go module/build caches to avoid unnecessary downloads, and unsets local
+provider overrides so it cannot accidentally exercise a non-Open-Score provider
+path:
 
 ```bash
 scripts/local-open-score-dogfood.sh
@@ -80,10 +79,8 @@ only synthetic fixtures against an explicitly configured local test endpoint:
 | Go | `go install golang.org/x/tools/cmd/godoc@v0.20.0` | `go` | `ASK` fixture asks |
 
 Adjacent regression tests keep the safety boundaries visible: provider outage
-fixtures ask locally across the same package-manager families, private/custom
-Yarn source shapes ask before any Open Score request is made, and default
-Socket compatibility tests prove Yarn does not become guarded unless the
-Open Score provider is explicitly selected.
+fixtures ask locally across the same package-manager families, and
+private/custom Yarn source shapes ask before any Open Score request is made.
 
 Then run the full suite before sending a docs PR:
 
@@ -109,11 +106,15 @@ export ATTACH_GUARD_LOG_PATH="$DOGFOOD_TMP/attach-guard-dogfood.audit.jsonl"
 
 ### Provider unavailable / local ask default
 
-Without a Socket token, the default provider path reports Socket unavailable and should follow the local provider-unavailable policy. This exercises the current CLI/evaluator path while keeping the Open Score positioning honest: it is not using Open Score network scoring.
+Without an Open Score token, an explicitly configured hosted endpoint returns
+unauthorized and should follow the local provider-unavailable policy. This
+exercises the current CLI/evaluator path while keeping the Open Score
+positioning honest.
 
 ```bash
-unset SOCKET_API_TOKEN
-./attach-guard evaluate npm install left-pad@1.3.0
+unset ATTACH_OPEN_SCORE_API_TOKEN
+ATTACH_OPEN_SCORE_ENDPOINT=https://score.attach.dev/v0/verdict \
+  ./attach-guard evaluate npm install left-pad@1.3.0
 ```
 
 Expected local semantics:
@@ -123,17 +124,6 @@ Expected local semantics:
 - audit output is written to `ATTACH_GUARD_LOG_PATH` if logging succeeds.
 
 If you explicitly configure stricter behavior, the result can change. For example, CI/team fail-closed behavior should be an explicit config choice, not the local default.
-
-### Optional Socket BYO-token provider path
-
-Only run this if you have your own Socket token and want to verify the currently shipped provider adapter:
-
-```bash
-# In a private shell, set SOCKET_API_TOKEN to your own value first.
-./attach-guard evaluate npm install left-pad@1.3.0
-```
-
-This is local BYO-provider dogfooding. Do not copy returned Socket scores into public Attach Open Score examples, fixtures, threshold targets, screenshots, or marketing copy.
 
 ## 3. Inspect audit/evaluation shape
 

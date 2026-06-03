@@ -72,11 +72,11 @@ type Provider interface {
 ```
 
 Current implementation status:
-- the current code default is Socket-backed only for explicit local BYO-token use and must not be described as hosted/default Attach scoring
-- an opt-in `open-score` HTTP provider maps explicitly configured Attach Open Score-compatible verdict responses into `ProviderVerdict`; see [`docs/OPEN_SCORE_PROVIDER.md`](OPEN_SCORE_PROVIDER.md) for verdict mapping and source/legal constraints
+- the current code default is Attach Open Score-backed, using either the local `attach-open-score` command or an explicitly configured HTTP verdict endpoint
+- the `open-score` provider maps Attach Open Score-compatible verdict responses into `ProviderVerdict`; see [`docs/OPEN_SCORE_PROVIDER.md`](OPEN_SCORE_PROVIDER.md) for verdict mapping and source/legal constraints
 - no proprietary provider types should leak into the policy engine
 
-The local Socket adapter normalizes Socket API responses into internal `VersionInfo` and `PackageScore` types for BYO-token runs. Open Score integration avoids directly mapping Open Score's risk score into the existing safety-score fields because the polarity is opposite; it uses verdict-first mapping and carries risk score only in `ProviderVerdict.RiskScore`.
+Open Score integration avoids directly mapping Open Score's risk score into the existing safety-score fields because the polarity is opposite; it uses verdict-first mapping and carries risk score only in `ProviderVerdict.RiskScore`.
 
 To add a new provider:
 1. Implement the `Provider` interface

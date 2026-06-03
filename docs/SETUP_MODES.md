@@ -1,6 +1,6 @@
 # Attach Guard — Setup Modes
 
-Attach Guard scores packages through **Attach Open Score**. There are three
+Attach Guard scores packages through **Attach Open Score**. There are two
 provider wirings and two onboarding modes built on top of them.
 
 ## Provider wirings (the building blocks)
@@ -9,16 +9,9 @@ provider wirings and two onboarding modes built on top of them.
 |--------|-----------------|--------|----------|-------------|
 | Hosted HTTP | `open-score` | **yes** (Bearer) | yes → `score.attach.dev` | `endpoint`, `api_token_env` |
 | Local command | `open-score` | no | no | `command` (defaults to `attach-open-score`) |
-| Legacy Socket | `socket` | yes | yes → socket.dev | `api_token_env` |
 
 Mode A and Mode B below both target the **Hosted HTTP** wiring. The local
 command wiring is the no-token fallback.
-
-> Current repo state (starting point): the plugin defaults to the **local
-> command** wiring (`plugin/config/config.yaml`), `bootstrap.sh` sets
-> `ATTACH_GUARD_PROVIDER=open-score` but handles no token, and
-> `plugin.json` still prompts for the old `socket_api_token`. The build steps
-> in each mode close that gap.
 
 ---
 
@@ -44,8 +37,8 @@ config for them.
     api_token_env: ATTACH_OPEN_SCORE_API_TOKEN
   ```
 - Token written to `~/.attach-guard/score.env` (mode `0600`) as
-  `export ATTACH_OPEN_SCORE_API_TOKEN='…'`, and a `source` line added to the
-  user's shell profile.
+  `ATTACH_OPEN_SCORE_API_TOKEN=…`. The plugin reads this file as data; it does
+  not source or execute it.
 
 ### To build (not yet implemented)
 - **Attach Platform: token issuance** — an endpoint that mints a per-user/org
@@ -128,13 +121,13 @@ no-token experience.
 
 ## Verify (either mode)
 ```bash
-source ~/.attach-guard/score.env   # if using a file
+TOKEN="$(sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?ATTACH_OPEN_SCORE_API_TOKEN=[[:space:]]*['\"]?([^'\"#[:space:]]+)['\"]?[[:space:]]*(#.*)?$/\2/p" ~/.attach-guard/score.env | tail -1)"
 curl -s https://score.attach.dev/health                                   # {"status":"ok"}
 curl -s -o /dev/null -w '%{http_code}\n' \
   -X POST https://score.attach.dev/v0/verdict \
   -d '{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}'            # 401 (no token)
 curl -s -X POST https://score.attach.dev/v0/verdict \
-  -H "Authorization: Bearer $ATTACH_OPEN_SCORE_API_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"ecosystem":"npm","name":"left-pad","version":"1.3.0"}'           # 200 + verdict
 ```
 

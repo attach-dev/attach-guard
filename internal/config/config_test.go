@@ -229,6 +229,7 @@ func TestEnvOverrides(t *testing.T) {
 
 func TestOpenScoreEnvOverrides(t *testing.T) {
 	cfg := DefaultConfig()
+	cfg.Provider.APITokenEnv = "SOCKET_API_TOKEN"
 	t.Setenv("ATTACH_OPEN_SCORE_ENDPOINT", "http://127.0.0.1:8757/v0/verdict")
 	t.Setenv("ATTACH_OPEN_SCORE_BIN", "/tmp/attach-open-score")
 
@@ -239,6 +240,9 @@ func TestOpenScoreEnvOverrides(t *testing.T) {
 	}
 	if cfg.Provider.Endpoint != "http://127.0.0.1:8757/v0/verdict" {
 		t.Fatalf("endpoint override = %q", cfg.Provider.Endpoint)
+	}
+	if cfg.Provider.APITokenEnv != "ATTACH_OPEN_SCORE_API_TOKEN" {
+		t.Fatalf("api token env override = %q", cfg.Provider.APITokenEnv)
 	}
 	if cfg.Provider.Command != "/tmp/attach-open-score" {
 		t.Fatalf("command override = %q", cfg.Provider.Command)

@@ -436,19 +436,20 @@ Every decision is logged to `~/.attach-guard/audit.jsonl`:
 
 ## Advanced: BYO-token local providers
 
-The current Socket.dev adapter is available only as an explicit local BYO-token provider. Socket data must not be used as default Attach scoring or as an Attach Open Score input/source unless a future written partnership and policy explicitly permit it.
+New setup should use Attach Open Score, either through the hosted endpoint with
+`ATTACH_OPEN_SCORE_API_TOKEN` or through the local `attach-open-score` command.
+Legacy provider adapters may remain in code for existing private workflows, but
+Socket data must not be used as default Attach scoring or as an Attach Open
+Score input/source unless a future written partnership and policy explicitly
+permit it.
 
-```yaml
-provider:
-  kind: socket
-  api_token_env: SOCKET_API_TOKEN
-```
-
-```bash
-export SOCKET_API_TOKEN="your-token-here"
-```
-
-Provider calls can fail when a local BYO-token account is unavailable, rate-limited, or out of quota. Provider startup/unavailability follows `provider_unavailable_behavior`; local defaults to ask/warn, and CI/team fail-closed behavior requires explicit configuration such as `provider_unavailable_behavior.ci: deny`. Individual scoring errors can still block a pinned install, and unpinned rewrites need real provider results to identify a version that passes policy.
+Provider calls can fail when the hosted service or local scorer is unavailable,
+rate-limited, or out of quota. Provider startup/unavailability follows
+`provider_unavailable_behavior`; local defaults to ask/warn, and CI/team
+fail-closed behavior requires explicit configuration such as
+`provider_unavailable_behavior.ci: deny`. Individual scoring errors can still
+block a pinned install, and unpinned rewrites need real provider results to
+identify a version that passes policy.
 
 ## Current Limitations
 
