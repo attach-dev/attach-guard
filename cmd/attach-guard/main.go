@@ -764,7 +764,13 @@ func newProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
 		if cfg.Provider.TimeoutSeconds != nil {
 			timeoutSeconds = *cfg.Provider.TimeoutSeconds
 		}
-		return openscoreprov.New(cfg.Provider.Endpoint, timeoutSeconds)
+		var opts []openscoreprov.Option
+		if env := strings.TrimSpace(cfg.Provider.APITokenEnv); env != "" {
+			if token := strings.TrimSpace(os.Getenv(env)); token != "" {
+				opts = append(opts, openscoreprov.WithAuthToken(token))
+			}
+		}
+		return openscoreprov.New(cfg.Provider.Endpoint, timeoutSeconds, opts...)
 	case "mock":
 		return provider.NewMockProvider(), nil
 	default:

@@ -381,6 +381,42 @@ func newMockProvider(fn func(*http.Request) (*http.Response, error)) *Provider {
 	}
 }
 
+func TestGetPackageScoreSendsAuthTokenWhenConfigured(t *testing.T) {
+	var gotAuth string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotAuth = r.Header.Get("Authorization")
+		return jsonResponse(http.StatusOK, `{"decision":"ALLOW"}`), nil
+	})}
+	prov, err := New("http://open-score.test/v0/verdict", 0, WithHTTPClient(client), WithAuthToken("  s3cret  "))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prov.GetPackageScore(context.Background(), api.EcosystemNPM, "left-pad", "1.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	if gotAuth != "Bearer s3cret" {
+		t.Fatalf("Authorization = %q, want %q", gotAuth, "Bearer s3cret")
+	}
+}
+
+func TestGetPackageScoreOmitsAuthWhenNoToken(t *testing.T) {
+	var hadAuth bool
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		_, hadAuth = r.Header["Authorization"]
+		return jsonResponse(http.StatusOK, `{"decision":"ALLOW"}`), nil
+	})}
+	prov, err := New("http://open-score.test/v0/verdict", 0, WithHTTPClient(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prov.GetPackageScore(context.Background(), api.EcosystemNPM, "left-pad", "1.3.0"); err != nil {
+		t.Fatal(err)
+	}
+	if hadAuth {
+		t.Fatal("Authorization header should be unset when no token is configured")
+	}
+}
+
 func jsonResponse(status int, body string) *http.Response {
 	return &http.Response{
 		StatusCode: status,
