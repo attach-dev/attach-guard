@@ -10,9 +10,9 @@
   "keywords": ["security", "supply-chain", "npm", "pnpm", "hooks"],
   "skills": "./skills/",
   "userConfig": {
-    "socket_api_token": {
-      "title": "Socket API Token",
-      "description": "Socket.dev API token for package risk lookups (free tier available at socket.dev)",
+    "attach_open_score_api_token": {
+      "title": "Attach Open Score API Token",
+      "description": "Token for the hosted Open Score verdict API (score.attach.dev). Leave blank to score locally with the attach-open-score binary instead.",
       "type": "string",
       "sensitive": true
     }

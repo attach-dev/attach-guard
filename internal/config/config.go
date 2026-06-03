@@ -72,8 +72,9 @@ type LoggingConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Provider: ProviderConfig{
-			Kind:    "open-score",
-			Command: "attach-open-score",
+			Kind:        "open-score",
+			Command:     "attach-open-score",
+			APITokenEnv: "ATTACH_OPEN_SCORE_API_TOKEN",
 		},
 		Policy: PolicyConfig{
 			DenyKnownMalware:       true,

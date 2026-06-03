@@ -144,3 +144,126 @@ func testEnvWithoutSocket() []string {
 	}
 	return env
 }
+
+func TestBootstrapPromotesOpenScoreTokenToHostedEndpoint(t *testing.T) {
+	bootstrap, err := os.ReadFile(filepath.Join("hooks", "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	hooksDir := filepath.Join(root, "hooks")
+	binDir := filepath.Join(hooksDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapPath := filepath.Join(hooksDir, "bootstrap.sh")
+	if err := os.WriteFile(bootstrapPath, bootstrap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stub binary echoes the resolved Open Score env so we can assert on it.
+	stub := "#!/usr/bin/env bash\nprintf '%s\\n' \"${ATTACH_OPEN_SCORE_API_TOKEN:-}\" \"${ATTACH_OPEN_SCORE_ENDPOINT:-}\" \"$1\"\n"
+	for _, binaryName := range []string{
+		"attach-guard-darwin-amd64",
+		"attach-guard-darwin-arm64",
+		"attach-guard-linux-amd64",
+		"attach-guard-linux-arm64",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, binaryName), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cmd := exec.Command(bootstrapPath, "version")
+	// Isolated HOME so a real ~/.attach-guard/score.env can't interfere; token
+	// supplied via the plugin userConfig option.
+	env := testEnvWithoutOpenScore()
+	env = append(env,
+		"HOME="+root,
+		"CLAUDE_PLUGIN_OPTION_attach_open_score_api_token=tok-123",
+	)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v\n%s", err, out)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("unexpected bootstrap output: %q", out)
+	}
+	if lines[0] != "tok-123" {
+		t.Fatalf("expected token tok-123, got %q", lines[0])
+	}
+	if lines[1] != "https://score.attach.dev/v0/verdict" {
+		t.Fatalf("expected hosted endpoint, got %q", lines[1])
+	}
+	if lines[2] != "version" {
+		t.Fatalf("expected forwarded arg version, got %q", lines[2])
+	}
+}
+
+func TestBootstrapWithoutOpenScoreTokenStaysLocal(t *testing.T) {
+	bootstrap, err := os.ReadFile(filepath.Join("hooks", "bootstrap.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	hooksDir := filepath.Join(root, "hooks")
+	binDir := filepath.Join(hooksDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bootstrapPath := filepath.Join(hooksDir, "bootstrap.sh")
+	if err := os.WriteFile(bootstrapPath, bootstrap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	stub := "#!/usr/bin/env bash\nprintf '%s\\n' \"${ATTACH_OPEN_SCORE_ENDPOINT:-}\" \"$1\"\n"
+	for _, binaryName := range []string{
+		"attach-guard-darwin-amd64",
+		"attach-guard-darwin-arm64",
+		"attach-guard-linux-amd64",
+		"attach-guard-linux-arm64",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, binaryName), []byte(stub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cmd := exec.Command(bootstrapPath, "version")
+	// Isolated empty HOME (no score.env), no plugin option -> no token.
+	env := testEnvWithoutOpenScore()
+	env = append(env, "HOME="+root)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bootstrap failed: %v\n%s", err, out)
+	}
+
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("unexpected bootstrap output: %q", out)
+	}
+	if lines[0] != "" {
+		t.Fatalf("expected no hosted endpoint without a token, got %q", lines[0])
+	}
+	if lines[1] != "version" {
+		t.Fatalf("expected forwarded arg version, got %q", lines[1])
+	}
+}
+
+func testEnvWithoutOpenScore() []string {
+	env := []string{}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "ATTACH_OPEN_SCORE_API_TOKEN=") &&
+			!strings.HasPrefix(entry, "ATTACH_OPEN_SCORE_ENDPOINT=") &&
+			!strings.HasPrefix(entry, "CLAUDE_PLUGIN_OPTION_attach_open_score_api_token=") &&
+			!strings.HasPrefix(entry, "HOME=") {
+			env = append(env, entry)
+		}
+	}
+	return env
+}
