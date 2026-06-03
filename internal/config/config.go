@@ -241,7 +241,11 @@ func applyEnvOverrides(cfg *Config) {
 
 // WriteDefault writes the default config to the given path.
 func WriteDefault(path string) error {
-	cfg := DefaultConfig()
+	return Write(path, DefaultConfig())
+}
+
+// Write marshals cfg to YAML and writes it to path (0600, parent dir 0700).
+func Write(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -251,4 +255,16 @@ func WriteDefault(path string) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+// PlatformConfig returns a config that uses the hosted Attach Platform score
+// edge with a per-user API key read from apiTokenEnv.
+func PlatformConfig(endpoint, apiTokenEnv string) *Config {
+	cfg := DefaultConfig()
+	cfg.Provider = ProviderConfig{
+		Kind:        "platform",
+		Endpoint:    endpoint,
+		APITokenEnv: apiTokenEnv,
+	}
+	return cfg
 }
