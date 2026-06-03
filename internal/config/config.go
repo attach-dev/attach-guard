@@ -171,25 +171,31 @@ func (c *Config) Validate() error {
 	if c == nil {
 		return nil
 	}
-	if c.Provider.Kind != "open-score" {
+	if c.Provider.Kind != "open-score" && c.Provider.Kind != "platform" {
 		return nil
 	}
 
-	if endpoint := strings.TrimSpace(c.Provider.Endpoint); endpoint != "" {
+	endpoint := strings.TrimSpace(c.Provider.Endpoint)
+	// The hosted platform provider always needs an endpoint; open-score may fall
+	// back to the local command when no endpoint is configured.
+	if c.Provider.Kind == "platform" && endpoint == "" {
+		return fmt.Errorf("provider.endpoint is required when provider.kind is platform")
+	}
+	if endpoint != "" {
 		u, err := url.Parse(endpoint)
 		if err != nil {
-			return fmt.Errorf("provider.endpoint must be a valid URL when provider.kind is open-score: %w", err)
+			return fmt.Errorf("provider.endpoint must be a valid URL when provider.kind is %s: %w", c.Provider.Kind, err)
 		}
 		if u.Scheme != "http" && u.Scheme != "https" {
-			return fmt.Errorf("provider.endpoint must use http or https when provider.kind is open-score")
+			return fmt.Errorf("provider.endpoint must use http or https when provider.kind is %s", c.Provider.Kind)
 		}
 		if u.Host == "" {
-			return fmt.Errorf("provider.endpoint must include a host when provider.kind is open-score")
+			return fmt.Errorf("provider.endpoint must include a host when provider.kind is %s", c.Provider.Kind)
 		}
 	}
 
 	if c.Provider.TimeoutSeconds != nil && *c.Provider.TimeoutSeconds <= 0 {
-		return fmt.Errorf("provider.timeout_seconds must be positive when provider.kind is open-score")
+		return fmt.Errorf("provider.timeout_seconds must be positive when provider.kind is %s", c.Provider.Kind)
 	}
 
 	return nil
