@@ -160,6 +160,18 @@ provider:
   timeout_seconds: 5
 ```
 
+For the hosted **Attach Platform** edge (per-user API key, `POST /v1/score/evaluations`), use `kind: platform`:
+
+```yaml
+provider:
+  kind: platform
+  endpoint: https://api.attach.dev/v1/score/evaluations
+  api_token_env: ATTACH_PLATFORM_API_TOKEN
+  timeout_seconds: 5
+```
+
+The platform provider authenticates with the per-user platform key named by `api_token_env`, sends `{target, options}` with reasons/source-refs enabled, and maps `attach_result.open_score_decision` (plus score/confidence/reasons/source_refs) into the verdict. The shared Open Score backend token stays server-side on the platform; Guard only holds the per-user platform key.
+
 The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. The local command provider consumes the same verdict shape from `attach-open-score package`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 provider path.
 
 Do not add proprietary-provider config examples to setup docs. Open Score
