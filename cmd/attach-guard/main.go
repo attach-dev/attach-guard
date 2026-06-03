@@ -194,6 +194,7 @@ func guardedAgentEnv(base []string, setup *platform.Config, agent string) []stri
 		"ATTACH_API_KEY":              setup.APIKey,
 		"ATTACH_SCORE_API_URL":        setup.APIURL,
 		"ATTACH_SCORE_API_KEY":        setup.APIKey,
+		"ATTACH_GUARD_PROVIDER":       "open-score",
 		"ATTACH_RUNTIME_KIND":         runtimeKind,
 		"ATTACH_GUARD_ACTIVE":         "1",
 		"ATTACH_GUARD_AGENT_COMMAND":  agent,
@@ -756,6 +757,9 @@ func newProviderFromConfig(cfg *config.Config) (provider.Provider, error) {
 		}
 		return p, nil
 	case "open-score":
+		if strings.TrimSpace(cfg.Provider.Endpoint) == "" {
+			return openscoreprov.NewLocal(cfg.Provider.Command)
+		}
 		timeoutSeconds := 0
 		if cfg.Provider.TimeoutSeconds != nil {
 			timeoutSeconds = *cfg.Provider.TimeoutSeconds

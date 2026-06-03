@@ -24,6 +24,7 @@ type ProviderConfig struct {
 	Kind           string `yaml:"kind"`
 	APITokenEnv    string `yaml:"api_token_env"`
 	Endpoint       string `yaml:"endpoint,omitempty"`
+	Command        string `yaml:"command,omitempty"`
 	TimeoutSeconds *int   `yaml:"timeout_seconds,omitempty"`
 }
 
@@ -71,8 +72,8 @@ type LoggingConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Provider: ProviderConfig{
-			Kind:        "socket",
-			APITokenEnv: "SOCKET_API_TOKEN",
+			Kind:    "open-score",
+			Command: "attach-open-score",
 		},
 		Policy: PolicyConfig{
 			DenyKnownMalware:       true,
@@ -173,20 +174,17 @@ func (c *Config) Validate() error {
 		return nil
 	}
 
-	endpoint := strings.TrimSpace(c.Provider.Endpoint)
-	if endpoint == "" {
-		return fmt.Errorf("provider.endpoint is required when provider.kind is open-score")
-	}
-
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return fmt.Errorf("provider.endpoint must be a valid URL when provider.kind is open-score: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("provider.endpoint must use http or https when provider.kind is open-score")
-	}
-	if u.Host == "" {
-		return fmt.Errorf("provider.endpoint must include a host when provider.kind is open-score")
+	if endpoint := strings.TrimSpace(c.Provider.Endpoint); endpoint != "" {
+		u, err := url.Parse(endpoint)
+		if err != nil {
+			return fmt.Errorf("provider.endpoint must be a valid URL when provider.kind is open-score: %w", err)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("provider.endpoint must use http or https when provider.kind is open-score")
+		}
+		if u.Host == "" {
+			return fmt.Errorf("provider.endpoint must include a host when provider.kind is open-score")
+		}
 	}
 
 	if c.Provider.TimeoutSeconds != nil && *c.Provider.TimeoutSeconds <= 0 {
@@ -222,6 +220,14 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("ATTACH_GUARD_PROVIDER"); v != "" {
 		cfg.Provider.Kind = v
+	}
+	if v := os.Getenv("ATTACH_OPEN_SCORE_ENDPOINT"); v != "" {
+		cfg.Provider.Kind = "open-score"
+		cfg.Provider.Endpoint = v
+	}
+	if v := os.Getenv("ATTACH_OPEN_SCORE_BIN"); v != "" {
+		cfg.Provider.Kind = "open-score"
+		cfg.Provider.Command = v
 	}
 }
 

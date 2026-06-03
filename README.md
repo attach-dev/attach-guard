@@ -15,13 +15,13 @@ attach-guard is a Claude Code plugin that intercepts package installation comman
 - Installs as a Claude Code plugin — no manual hook configuration needed
 - Intercepts `npm install`, `pnpm add`, direct `pip` / `pip3 install`, `python -m pip install` / `python3 -m pip install` wrappers, `uv pip install`, `go get` / `go install`, and `cargo add` / `cargo install` commands via PreToolUse hooks
 - Evaluates packages with the configured provider before install commands run
-- Supports explicit provider configuration, including Attach Open Score-compatible verdict endpoints and local BYO-token providers
+- Supports explicit provider configuration, including local Attach Open Score, Attach Open Score-compatible verdict endpoints, and legacy local BYO-token providers
 - Denies known malware and high-confidence dangerous packages automatically
 - Asks for confirmation on gray-band packages and provider-unavailable cases in local mode
 - Rewrites unpinned installs to safe pinned versions when possible
 - Logs every decision to a local JSONL audit trail
 
-Attach Open Score is the first-party scoring direction. Today, `open-score` is an opt-in HTTP provider for explicitly configured Attach Open Score-compatible verdict endpoints; no hosted/default Attach scoring endpoint is baked into attach-guard. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) and [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe verification.
+Attach Open Score is the first-party scoring direction. By default, `open-score` shells out to a local `attach-open-score package` command and can also be pointed at an explicit Attach Open Score-compatible HTTP verdict endpoint. No hosted/default Attach scoring endpoint is baked into attach-guard. See [Attach Open Score provider semantics](docs/OPEN_SCORE_PROVIDER.md) and [Local Attach Open Score dogfood guide](docs/LOCAL_OPEN_SCORE_DOGFOOD.md) for public-safe verification.
 
 ## Smart Version Replacement: Block Without Breaking Flow
 
@@ -91,7 +91,7 @@ Security enforcement requires interception at the tool-call boundary, before exe
 
 ### Quick Start: Claude Code Plugin
 
-The fastest way to try the current packaged plugin. It installs the hook and local config; provider credentials remain explicit local setup. Attach Open Score is the first-party scoring direction, and `open-score` can be configured against compatible verdict endpoints. No hosted/default Attach scoring endpoint ships in this package.
+The fastest way to try the current packaged plugin. It installs the hook and local config. Attach Open Score is the first-party scoring direction, and `open-score` uses a local `attach-open-score` binary by default or an explicitly configured compatible verdict endpoint. No hosted/default Attach scoring endpoint ships in this package.
 
 ```bash
 # Add the marketplace and install (one-time)
@@ -105,7 +105,7 @@ Or from within a Claude Code session:
 /plugin install attach-guard@attach-dev
 ```
 
-During installation or enablement, the current local BYO-token provider path may prompt for a provider API token (stored securely in your system keychain). That token is for explicit local provider use only.
+Legacy BYO-token provider paths may prompt for a provider API token when explicitly configured. That token is for explicit local provider use only and is not required for the default Open Score path.
 
 > **If the install/enable prompt didn't appear**, re-trigger it with:
 > ```bash
@@ -168,9 +168,17 @@ attach-guard version
 # attach-guard v0.1.0
 ```
 
-#### Step 2: Configure provider credentials if needed
+#### Step 2: Configure the scorer if needed
 
-Provider setup is explicit: BYO-token local providers require their provider-specific token environment variable, while Attach Open Score-compatible HTTP endpoints require `provider.kind: open-score` plus an `endpoint`.
+The default provider is local Attach Open Score:
+
+```yaml
+provider:
+  kind: open-score
+  command: attach-open-score
+```
+
+Make sure `attach-open-score` is on `PATH`, or set `ATTACH_OPEN_SCORE_BIN=/path/to/attach-open-score`. To use a local HTTP service instead, set `provider.kind: open-score` plus an `endpoint`.
 
 #### Step 3: Initialize config
 
@@ -179,7 +187,7 @@ attach-guard config init
 # Default config written to ~/.attach-guard/config.yaml
 ```
 
-This creates `~/.attach-guard/config.yaml` with compatibility defaults. Review [Configuration](#configuration) before relying on provider behavior; no hosted/default Attach scoring endpoint is shipped in this package.
+This creates `~/.attach-guard/config.yaml` with local Open Score defaults. Review [Configuration](#configuration) before relying on provider behavior; no hosted/default Attach scoring endpoint is shipped in this package.
 
 #### Step 4: Add the Claude Code hook
 
@@ -303,12 +311,12 @@ attach-guard run codex
 
 Default config location: `~/.attach-guard/config.yaml`
 
-`attach-guard config init` currently writes a compatibility config for the local BYO-token provider path. That compatibility default is not hosted/default Attach scoring; use it only with an explicit local provider token. Attach Open Score is the first-party scoring direction, but no hosted/default Attach scoring endpoint is shipped in this package.
+`attach-guard config init` writes a local Open Score config. Attach Open Score is the first-party scoring direction, but no hosted/default Attach scoring endpoint is shipped in this package.
 
 ```yaml
 provider:
-  kind: socket                     # explicit local BYO-token provider
-  api_token_env: SOCKET_API_TOKEN
+  kind: open-score
+  command: attach-open-score       # or set ATTACH_OPEN_SCORE_BIN
 policy:
   deny_known_malware: true
   min_supply_chain_score: 70       # hard allow threshold
@@ -336,7 +344,7 @@ logging:
   path: "~/.attach-guard/audit.jsonl"
 ```
 
-Opt in to an Attach Open Score-compatible HTTP verdict endpoint explicitly:
+Use an Attach Open Score-compatible HTTP verdict endpoint explicitly:
 
 ```yaml
 provider:
@@ -347,12 +355,22 @@ provider:
 
 The `open-score` provider posts only public package coordinates (`ecosystem`, `name`, `version`) and consumes verdict fields (`decision`, optional `score`, optional `confidence`, `reasons`, summarized `source_refs`). Provider failures and malformed responses map to `UNKNOWN`/provider-unavailable behavior, never `ALLOW`.
 
+When `endpoint` is omitted, attach-guard shells out to the configured `command` and runs:
+
+```bash
+attach-open-score package --ecosystem <ecosystem> --name <name> --version <version>
+```
+
+`attach-open-score` persists package-version verdicts in `~/.attach-open-score/scores.json` by default. Set `ATTACH_OPEN_SCORE_DB_PATH` to choose a different cache file.
+
 For BYO-token local provider configuration, see [Advanced: BYO-token local providers](#advanced-byo-token-local-providers).
 
 ### Environment variable overrides
 
 - `ATTACH_GUARD_LOG_PATH` — override log path
 - `ATTACH_GUARD_PROVIDER` — override provider kind
+- `ATTACH_OPEN_SCORE_BIN` — use a specific local `attach-open-score` binary and force `provider.kind: open-score`
+- `ATTACH_OPEN_SCORE_ENDPOINT` — use a specific Open Score HTTP verdict endpoint and force `provider.kind: open-score`
 
 ### Config precedence
 
@@ -437,7 +455,7 @@ Provider calls can fail when a local BYO-token account is unavailable, rate-limi
 - Direct `pip` / `pip3`, `python -m pip` / `python3 -m pip` wrappers with safe interpreter flags before `-m`, `uv pip`, `go get` / `go install`, and `cargo add` / `cargo install` are supported
 - Rewrites are emitted only for direct package-manager command shapes; wrapped pip commands are evaluated but ask for manual review when a safe-version rewrite is needed
 - `uv add` / `uv sync`, pip extras/range/constraint-aware handling, Cargo requirement syntax, and non-semver Go queries are intentionally deferred to manual review rather than being auto-evaluated
-- Default hosted scoring is not baked into this package; today, Attach Open Score-compatible verdicts require explicit `open-score` endpoint configuration or platform-issued credentials from `attach setup`
+- Default hosted scoring is not baked into this package; local Attach Open Score runs through `attach-open-score`, and HTTP scoring requires explicit `open-score` endpoint configuration or platform-issued credentials from `attach setup`
 - Local BYO-token providers can be affected by upstream availability, rate limits, or quota during evaluation and version rewrite
 - No transitive dependency analysis
 - No lockfile graph support
