@@ -146,6 +146,20 @@ policy:
     ci: deny
 ```
 
+For a token-protected hosted endpoint, set `api_token_env` to the name of an
+environment variable holding the Bearer token. When that variable is set,
+attach-guard sends `Authorization: Bearer <token>` on every verdict request; if
+it is unset or `api_token_env` is omitted, requests are anonymous (current
+behavior).
+
+```yaml
+provider:
+  kind: open-score
+  endpoint: https://score.attach.dev/v0/verdict
+  api_token_env: ATTACH_OPEN_SCORE_API_TOKEN
+  timeout_seconds: 5
+```
+
 The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. The local command provider consumes the same verdict shape from `attach-open-score package`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 provider path.
 
 Socket provider docs must keep this in advanced/local BYO-token context and show explicit configuration:

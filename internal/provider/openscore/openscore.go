@@ -29,6 +29,7 @@ const (
 // verdict endpoints.
 type Provider struct {
 	endpoint   string
+	authToken  string
 	httpClient *http.Client
 }
 
@@ -42,6 +43,14 @@ func WithHTTPClient(client *http.Client) Option {
 		if client != nil {
 			p.httpClient = client
 		}
+	}
+}
+
+// WithAuthToken sets a Bearer token sent as the Authorization header on every
+// verdict request. An empty token leaves the header unset (anonymous access).
+func WithAuthToken(token string) Option {
+	return func(p *Provider) {
+		p.authToken = strings.TrimSpace(token)
 	}
 }
 
@@ -144,6 +153,9 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "attach-guard open-score")
+	if p.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+p.authToken)
+	}
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
