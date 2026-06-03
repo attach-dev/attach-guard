@@ -260,3 +260,40 @@ func TestResolveLogPath(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, path)
 	}
 }
+
+func TestPlatformConfigRoundTrip(t *testing.T) {
+	cfg := PlatformConfig("https://api.attach.dev/v1/score/evaluations", "ATTACH_PLATFORM_API_TOKEN")
+	if cfg.Provider.Kind != "platform" {
+		t.Fatalf("kind = %q, want platform", cfg.Provider.Kind)
+	}
+	if cfg.Provider.Endpoint != "https://api.attach.dev/v1/score/evaluations" {
+		t.Fatalf("endpoint = %q", cfg.Provider.Endpoint)
+	}
+	if cfg.Provider.APITokenEnv != "ATTACH_PLATFORM_API_TOKEN" {
+		t.Fatalf("api_token_env = %q", cfg.Provider.APITokenEnv)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), ".attach-guard", "config.yaml")
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "kind: platform") {
+		t.Fatalf("written config missing platform kind:\n%s", data)
+	}
+
+	// Reload and confirm it parses back to the platform provider.
+	reloaded, err := LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Provider.Kind != "platform" || reloaded.Provider.APITokenEnv != "ATTACH_PLATFORM_API_TOKEN" {
+		t.Fatalf("reloaded provider = %+v", reloaded.Provider)
+	}
+}

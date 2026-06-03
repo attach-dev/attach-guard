@@ -688,24 +688,70 @@ func cmdCodexHook() {
 
 // cmdConfig handles config subcommands.
 func cmdConfig() {
-	if len(os.Args) < 3 || os.Args[2] != "init" {
-		fmt.Fprintln(os.Stderr, "usage: attach-guard config init")
+	sub := ""
+	if len(os.Args) >= 3 {
+		sub = os.Args[2]
+	}
+	switch sub {
+	case "init":
+		cmdConfigInit()
+	case "platform":
+		cmdConfigPlatform(os.Args[3:])
+	default:
+		fmt.Fprintln(os.Stderr, "usage: attach-guard config <init|platform>")
 		os.Exit(1)
 	}
+}
 
+func configPath() (string, error) {
 	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return home + "/.attach-guard/config.yaml", nil
+}
+
+func cmdConfigInit() {
+	path, err := configPath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-
-	path := home + "/.attach-guard/config.yaml"
 	if err := config.WriteDefault(path); err != nil {
 		fmt.Fprintf(os.Stderr, "error writing config: %v\n", err)
 		os.Exit(1)
 	}
-
 	fmt.Printf("Default config written to %s\n", path)
+}
+
+// cmdConfigPlatform writes a config pointing Guard at the hosted Attach Platform
+// score edge, authenticating with a per-user platform API key.
+func cmdConfigPlatform(args []string) {
+	flags := flag.NewFlagSet("attach-guard config platform", flag.ExitOnError)
+	endpoint := flags.String("endpoint", "https://api.attach.dev/v1/score/evaluations", "hosted score endpoint")
+	tokenEnv := flags.String("token-env", "ATTACH_PLATFORM_API_TOKEN", "env var holding the per-user platform API key")
+	if err := flags.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	cfg := config.PlatformConfig(*endpoint, *tokenEnv)
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	path, err := configPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := config.Write(path, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Platform config written to %s\n", path)
+	fmt.Printf("Set your per-user platform API key: export %s=<key>\n", *tokenEnv)
 }
 
 // isSelfInvocation returns true when the command text is invoking attach-guard
