@@ -1,6 +1,10 @@
 provider:
   kind: open-score
   command: attach-open-score
+  # When an Open Score API token is provided (plugin prompt / score.env),
+  # bootstrap.sh promotes the provider to the hosted endpoint and the token is
+  # read from this env var. With no token, the local `command` above is used.
+  api_token_env: ATTACH_OPEN_SCORE_API_TOKEN
 policy:
   deny_known_malware: true
   min_supply_chain_score: 70

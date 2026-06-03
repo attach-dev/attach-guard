@@ -147,4 +147,23 @@ fi
 export ATTACH_GUARD_PLUGIN_CONFIG_DIR="${PLUGIN_ROOT}/config"
 export ATTACH_GUARD_PROVIDER="${ATTACH_GUARD_PROVIDER:-open-score}"
 
+# --- Attach Open Score token (optional) ---
+# Resolve a hosted Open Score token. Precedence:
+#   existing env var > plugin userConfig prompt > ~/.attach-guard/score.env
+if [[ -z "${ATTACH_OPEN_SCORE_API_TOKEN:-}" ]]; then
+  if [[ -n "${CLAUDE_PLUGIN_OPTION_attach_open_score_api_token:-}" ]]; then
+    export ATTACH_OPEN_SCORE_API_TOKEN="$CLAUDE_PLUGIN_OPTION_attach_open_score_api_token"
+  elif [[ -r "${HOME}/.attach-guard/score.env" ]]; then
+    # shellcheck disable=SC1091
+    . "${HOME}/.attach-guard/score.env"
+  fi
+fi
+
+# With a token, route to the hosted verdict API (unless an endpoint is already
+# set, e.g. a self-hosted Open Score). With no token, the provider falls back to
+# the local `command` from config.yaml.
+if [[ -n "${ATTACH_OPEN_SCORE_API_TOKEN:-}" && -z "${ATTACH_OPEN_SCORE_ENDPOINT:-}" ]]; then
+  export ATTACH_OPEN_SCORE_ENDPOINT="https://score.attach.dev/v0/verdict"
+fi
+
 exec "$BINARY" "$@"
