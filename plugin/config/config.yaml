@@ -1,6 +1,6 @@
 provider:
-  kind: socket
-  api_token_env: SOCKET_API_TOKEN
+  kind: open-score
+  command: attach-open-score
 policy:
   deny_known_malware: true
   min_supply_chain_score: 70

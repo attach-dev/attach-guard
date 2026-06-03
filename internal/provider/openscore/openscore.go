@@ -165,6 +165,10 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 		return unavailableVersion(version), nil
 	}
 
+	return versionInfoFromResponse(version, response), nil
+}
+
+func versionInfoFromResponse(version string, response verdictResponse) *api.VersionInfo {
 	decision := api.ProviderVerdictDecision(strings.TrimSpace(response.Decision))
 	switch decision {
 	case api.ProviderVerdictAllow, api.ProviderVerdictAsk, api.ProviderVerdictDeny, api.ProviderVerdictUnknown:
@@ -177,9 +181,9 @@ func (p *Provider) GetPackageScore(ctx context.Context, ecosystem api.Ecosystem,
 				Reasons:    []string(response.Reasons),
 				SourceRefs: []string(response.SourceRefs),
 			},
-		}, nil
+		}
 	default:
-		return unavailableVersion(version), nil
+		return unavailableVersion(version)
 	}
 }
 

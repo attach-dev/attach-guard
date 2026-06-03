@@ -10,8 +10,11 @@ import (
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
-	if cfg.Provider.Kind != "socket" {
-		t.Errorf("expected provider=socket, got %s", cfg.Provider.Kind)
+	if cfg.Provider.Kind != "open-score" {
+		t.Errorf("expected provider=open-score, got %s", cfg.Provider.Kind)
+	}
+	if cfg.Provider.Command != "attach-open-score" {
+		t.Errorf("expected open-score command attach-open-score, got %q", cfg.Provider.Command)
 	}
 	if cfg.Policy.MinSupplyChainScore != 70 {
 		t.Errorf("expected min_supply_chain_score=70, got %f", cfg.Policy.MinSupplyChainScore)
@@ -102,11 +105,6 @@ func TestLoadFromFileOpenScoreValidation(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "missing endpoint",
-			config:  "provider:\n  kind: open-score\n",
-			wantErr: "provider.endpoint is required",
-		},
-		{
 			name:    "malformed endpoint",
 			config:  "provider:\n  kind: open-score\n  endpoint: http://[::1\n",
 			wantErr: "provider.endpoint must be a valid URL",
@@ -174,8 +172,8 @@ func TestPluginConfigDir(t *testing.T) {
 		t.Errorf("expected plugin config min_supply_chain_score=42, got %f", cfg.Policy.MinSupplyChainScore)
 	}
 	// Other defaults should be preserved
-	if cfg.Provider.Kind != "socket" {
-		t.Errorf("expected provider=socket, got %s", cfg.Provider.Kind)
+	if cfg.Provider.Kind != "open-score" {
+		t.Errorf("expected provider=open-score, got %s", cfg.Provider.Kind)
 	}
 }
 
@@ -226,6 +224,24 @@ func TestEnvOverrides(t *testing.T) {
 
 	if cfg.Logging.Path != "/tmp/test-audit.jsonl" {
 		t.Errorf("expected log path from env, got %s", cfg.Logging.Path)
+	}
+}
+
+func TestOpenScoreEnvOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	t.Setenv("ATTACH_OPEN_SCORE_ENDPOINT", "http://127.0.0.1:8757/v0/verdict")
+	t.Setenv("ATTACH_OPEN_SCORE_BIN", "/tmp/attach-open-score")
+
+	applyEnvOverrides(cfg)
+
+	if cfg.Provider.Kind != "open-score" {
+		t.Fatalf("expected provider open-score, got %q", cfg.Provider.Kind)
+	}
+	if cfg.Provider.Endpoint != "http://127.0.0.1:8757/v0/verdict" {
+		t.Fatalf("endpoint override = %q", cfg.Provider.Endpoint)
+	}
+	if cfg.Provider.Command != "/tmp/attach-open-score" {
+		t.Fatalf("command override = %q", cfg.Provider.Command)
 	}
 }
 

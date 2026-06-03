@@ -321,8 +321,9 @@ func TestEvaluate_NonInstallCommand(t *testing.T) {
 	}
 }
 
-func TestEvaluate_DefaultProviderDoesNotStartGuardingYarn(t *testing.T) {
+func TestEvaluate_LegacySocketProviderDoesNotStartGuardingYarn(t *testing.T) {
 	cfg := config.DefaultConfig()
+	cfg.Provider.Kind = "socket"
 	prov := &recordingProvider{name: "socket", available: true}
 	eval := NewEvaluator(cfg, prov)
 
@@ -340,7 +341,7 @@ func TestEvaluate_DefaultProviderDoesNotStartGuardingYarn(t *testing.T) {
 			t.Fatalf("Evaluate(%q) returned error: %v", command, err)
 		}
 		if result.Decision != api.Allow {
-			t.Fatalf("expected Allow for default-provider Yarn passthrough %q, got %s: %s", command, result.Decision, result.Reason)
+			t.Fatalf("expected Allow for legacy Socket Yarn passthrough %q, got %s: %s", command, result.Decision, result.Reason)
 		}
 		if result.Reason != "not a guarded install command" {
 			t.Fatalf("expected legacy passthrough reason for %q, got %q", command, result.Reason)
@@ -348,7 +349,7 @@ func TestEvaluate_DefaultProviderDoesNotStartGuardingYarn(t *testing.T) {
 	}
 
 	if prov.availableCalls != 0 || prov.scoreCalls != 0 || prov.versionCalls != 0 {
-		t.Fatalf("default provider should not be consulted for Yarn, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
+		t.Fatalf("legacy Socket provider should not be consulted for Yarn, got available=%d score=%d versions=%d", prov.availableCalls, prov.scoreCalls, prov.versionCalls)
 	}
 }
 

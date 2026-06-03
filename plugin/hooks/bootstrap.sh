@@ -145,32 +145,6 @@ fi
 # --- Exec ---
 
 export ATTACH_GUARD_PLUGIN_CONFIG_DIR="${PLUGIN_ROOT}/config"
-
-# Map plugin userConfig token to the env var the binary expects, if not already set.
-# Claude documents sensitive userConfig values as CLAUDE_PLUGIN_OPTION_<KEY>;
-# accept the manifest key form directly and keep the uppercase variant as a
-# fallback for compatibility with older/local setups.
-if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
-  if [[ -n "${CLAUDE_PLUGIN_OPTION_socket_api_token:-}" ]]; then
-    export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_socket_api_token"
-  elif [[ -n "${CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN:-}" ]]; then
-    export SOCKET_API_TOKEN="$CLAUDE_PLUGIN_OPTION_SOCKET_API_TOKEN"
-  fi
-fi
-
-# File-based fallback: Claude Code hook subprocesses may not inherit shell env
-# vars, so also check ~/.attach-guard/token (plain text, first line only).
-if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
-  TOKEN_FILE="${HOME}/.attach-guard/token"
-  if [[ -r "$TOKEN_FILE" ]]; then
-    SOCKET_API_TOKEN="$(head -1 "$TOKEN_FILE" | tr -d '[:space:]')"
-    export SOCKET_API_TOKEN
-  fi
-fi
-
-# Require a Socket API token — without it, every lookup returns "provider unavailable"
-if [[ -z "${SOCKET_API_TOKEN:-}" ]]; then
-  fatal_error "Socket API token not configured. Options: (1) echo YOUR_TOKEN > ~/.attach-guard/token (2) claude plugin disable attach-guard@attach-dev && claude plugin enable attach-guard@attach-dev (3) export SOCKET_API_TOKEN=<token> in your shell profile. Get a free token at https://socket.dev"
-fi
+export ATTACH_GUARD_PROVIDER="${ATTACH_GUARD_PROVIDER:-open-score}"
 
 exec "$BINARY" "$@"

@@ -7,7 +7,7 @@ Audience: attach-guard maintainers, Attach Open Score implementers, policy autho
 
 attach-guard should treat Attach Open Score as the first-party scoring direction. Proprietary providers, including Socket, remain explicit BYO-token local integrations unless a future written partnership and policy permit broader hosted/default use.
 
-This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer and an opt-in `open-score` HTTP provider for configured Attach Open Score-compatible verdict endpoints. No hosted/default Attach Open Score endpoint is baked into defaults.
+This note defines how Attach Open Score verdicts map into attach-guard behavior at the provider/policy boundary. The current code includes the verdict semantics layer, a local `attach-open-score package` provider, and an `open-score` HTTP provider for configured Attach Open Score-compatible verdict endpoints. No hosted/default Attach Open Score endpoint is baked into defaults.
 
 For local dogfooding of the current verdict-semantics path, see [Local Attach Open Score dogfood guide](LOCAL_OPEN_SCORE_DOGFOOD.md).
 
@@ -112,18 +112,25 @@ UNKNOWN verdict      → DENY or policy failure
 
 ## Config direction
 
-Current config supports a single provider kind and an environment override. The legacy code default remains the local BYO-token Socket provider for compatibility; do not describe that as hosted/default Attach scoring:
+Current config supports a single provider kind and environment overrides. The default provider is local Attach Open Score:
 
 ```yaml
 provider:
-  kind: socket
+  kind: open-score
+  command: attach-open-score
 ```
 
 ```bash
-ATTACH_GUARD_PROVIDER=mock
+ATTACH_OPEN_SCORE_BIN=/path/to/attach-open-score
 ```
 
-The opt-in provider kind for this integration is `open-score`. `endpoint` is the Attach Open Score-compatible HTTP verdict URL; no hosted endpoint is baked into defaults.
+When `endpoint` is omitted, attach-guard shells out to the configured command:
+
+```bash
+attach-open-score package --ecosystem <ecosystem> --name <name> --version <version>
+```
+
+`endpoint` switches the same provider kind to an Attach Open Score-compatible HTTP verdict URL; no hosted endpoint is baked into defaults.
 
 ```yaml
 provider:
@@ -139,7 +146,7 @@ policy:
     ci: deny
 ```
 
-The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 HTTP provider path.
+The v0 HTTP provider posts only `ecosystem`, `name`, and `version`, then consumes `decision`, optional `score`, optional `confidence`, `reasons`, and `source_refs`. The local command provider consumes the same verdict shape from `attach-open-score package`. Structured reason and source reference objects are projected to reason codes and source reference IDs/URLs before attach-guard writes evaluation or audit output. The current provider scores explicit package coordinates; version listing for unpinned installs remains outside this v0 provider path.
 
 Socket provider docs must keep this in advanced/local BYO-token context and show explicit configuration:
 
@@ -151,12 +158,12 @@ provider:
 
 ## Implementation checklist
 
-Current attach-guard code includes the verdict semantics layer and the opt-in
-HTTP provider. See the phased plan in
+Current attach-guard code includes the verdict semantics layer and Open Score
+providers. See the phased plan in
 [`docs/plans/2026-05-07-open-score-provider-impl.md`](plans/2026-05-07-open-score-provider-impl.md).
 
 - [x] Add provider kind: `open-score`.
-- [x] Add runtime shape: HTTP client provider against a configured Attach Open Score-compatible endpoint.
+- [x] Add runtime shapes: local `attach-open-score package` provider and HTTP client provider against a configured Attach Open Score-compatible endpoint.
 - [x] Extend provider/policy result shape with a verdict-first result such as `ProviderVerdict`.
 - [x] Add fixture-driven tests using public-safe synthetic verdicts.
 - [x] Test `UNKNOWN` mapping in local and CI modes via `policy.unknown_behavior`.

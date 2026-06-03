@@ -364,15 +364,13 @@ func TestCmdRunReportsRejectedPlatformCredentialWithoutLeakingToken(t *testing.T
 	}
 }
 
-func TestNewProviderFromConfigKeepsSocketDefault(t *testing.T) {
-	t.Setenv("SOCKET_API_TOKEN", "")
-
+func TestNewProviderFromConfigUsesOpenScoreDefault(t *testing.T) {
 	prov, err := newProviderFromConfig(config.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prov.Name() != "socket" {
-		t.Fatalf("expected default provider socket, got %q", prov.Name())
+	if prov.Name() != "open-score" {
+		t.Fatalf("expected default provider open-score, got %q", prov.Name())
 	}
 }
 
