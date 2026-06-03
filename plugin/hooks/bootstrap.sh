@@ -45,6 +45,12 @@ EOJSON
   fi
 }
 
+read_score_env_token() {
+  local file="$1"
+  [[ -r "$file" ]] || return 0
+  sed -n -E "s/^[[:space:]]*(export[[:space:]]+)?ATTACH_OPEN_SCORE_API_TOKEN=[[:space:]]*['\"]?([^'\"#[:space:]]+)['\"]?[[:space:]]*(#.*)?$/\2/p" "$file" | tail -1
+}
+
 # --- Platform detection ---
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -153,9 +159,13 @@ export ATTACH_GUARD_PROVIDER="${ATTACH_GUARD_PROVIDER:-open-score}"
 if [[ -z "${ATTACH_OPEN_SCORE_API_TOKEN:-}" ]]; then
   if [[ -n "${CLAUDE_PLUGIN_OPTION_attach_open_score_api_token:-}" ]]; then
     export ATTACH_OPEN_SCORE_API_TOKEN="$CLAUDE_PLUGIN_OPTION_attach_open_score_api_token"
+  elif [[ -n "${CLAUDE_PLUGIN_OPTION_ATTACH_OPEN_SCORE_API_TOKEN:-}" ]]; then
+    export ATTACH_OPEN_SCORE_API_TOKEN="$CLAUDE_PLUGIN_OPTION_ATTACH_OPEN_SCORE_API_TOKEN"
   elif [[ -r "${HOME}/.attach-guard/score.env" ]]; then
-    # shellcheck disable=SC1091
-    . "${HOME}/.attach-guard/score.env"
+    TOKEN_FROM_FILE="$(read_score_env_token "${HOME}/.attach-guard/score.env")"
+    if [[ -n "$TOKEN_FROM_FILE" ]]; then
+      export ATTACH_OPEN_SCORE_API_TOKEN="$TOKEN_FROM_FILE"
+    fi
   fi
 fi
 
